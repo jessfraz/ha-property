@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""Validate the release's actual package metadata."""
+import json
+import os
+from pathlib import Path
+import sys
+import tomllib
+
+import yaml
+
+root = Path(__file__).resolve().parent.parent
+version = tomllib.loads((root / "Cargo.toml").read_text())["package"]["version"]
+values = [
+    tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"],
+    json.loads((root / "custom_components/property/manifest.json").read_text())["version"],
+    yaml.safe_load((root / "property/config.yaml").read_text())["version"],
+]
+if values != [version] * len(values):
+    raise SystemExit("release metadata versions disagree")
+tag = sys.argv[1] if len(sys.argv) == 2 else os.environ.get("RELEASE_TAG")
+if tag is not None and tag != f"v{version}":
+    raise SystemExit("release tag disagrees with package metadata")
+print(f"Release metadata agrees: {version}")

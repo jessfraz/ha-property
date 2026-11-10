@@ -1,0 +1,21 @@
+{
+  "domain": "property",
+  "name": "Property",
+  "after_dependencies": [
+    "hassio"
+  ],
+  "codeowners": [
+    "@jessfraz"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "http",
+    "persistent_notification"
+  ],
+  "documentation": "https://github.com/jessfraz/ha-property",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

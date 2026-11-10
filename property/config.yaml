@@ -1,0 +1,30 @@
+name: Property
+version: "0.1.0"
+slug: property
+description: An evidence-backed property tax ledger
+url: https://github.com/jessfraz/ha-property
+arch:
+  - amd64
+  - aarch64
+image: ghcr.io/jessfraz/ha-property
+startup: application
+boot: auto
+backup: cold
+timeout: 120
+init: false
+ingress: true
+ingress_port: 8099
+panel_admin: true
+panel_icon: mdi:home-city-outline
+hassio_api: true
+hassio_role: default
+ports:
+  8080/tcp: null
+ports_description:
+  8080/tcp: Optional bearer-authenticated API
+environment:
+  PROPERTY_ENABLE_INGRESS: "true"
+options: {}
+schema: {}
+discovery:
+  - property

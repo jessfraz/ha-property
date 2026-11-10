@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""Inspect publishable files and reachable history, reporting categories only."""
+import re
+import subprocess
+from pathlib import Path
+
+root = Path(__file__).resolve().parent.parent
+forbidden_names = {"credentials.json", "options.json", "secrets.yaml", "secrets.yml", ".env", "id_rsa", "id_ed25519"}
+forbidden_suffixes = (".sqlite3", ".sqlite3-wal", ".sqlite3-shm", ".db", ".pem", ".key", ".har", ".pcap")
+patterns = {
+    "private key": re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
+    "provider credential": re.compile(rb"(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|sk-(?:proj-|ant-)?[A-Za-z0-9_-]{24,}|xox[baprs]-[0-9A-Za-z-]{20,})"),
+    "long-lived credential": re.compile(rb"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}"),
+}
+
+def git(*args: str) -> bytes:
+    return subprocess.check_output(["git", "-C", str(root), *args])
+
+def check(path: str, data: bytes) -> None:
+    name = Path(path).name.lower()
+    if name in forbidden_names or name.endswith(forbidden_suffixes):
+        raise SystemExit(f"private runtime file: {path}")
+    for category, pattern in patterns.items():
+        if pattern.search(data):
+            raise SystemExit(f"{category}: {path}")
+
+# Git determines the publishable working tree. Ignored caches and private local
+# scratch are not public artifacts. Tracked ignored files remain included.
+for name in git("ls-files", "--cached", "--others", "--exclude-standard", "-z").split(b"\0"):
+    if name:
+        path = root / name.decode()
+        if path.is_file():
+            check(name.decode(), path.read_bytes())
+# Inspect every reachable tree, not just the final tree, before first publication.
+seen: set[tuple[bytes, bytes]] = set()
+for commit in git("rev-list", "--all").splitlines():
+    check("commit message", git("cat-file", "commit", commit.decode()))
+    for entry in git("ls-tree", "-rz", commit.decode()).split(b"\0"):
+        if not entry:
+            continue
+        metadata, name = entry.split(b"\t", 1)
+        _, kind, oid = metadata.split()
+        if kind == b"blob" and (oid, name) not in seen:
+            seen.add((oid, name))
+            check(name.decode(), git("cat-file", "blob", oid.decode()))
+print("Public tree and reachable history check passed.")

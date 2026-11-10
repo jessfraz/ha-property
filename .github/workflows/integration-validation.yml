@@ -1,0 +1,46 @@
+name: Integration validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate integration metadata with Home Assistant
+        uses: home-assistant/actions/hassfest@86d4564712fa02543c808e3a693dd04f9d3f8361
+
+  marketplace:
+    name: Marketplace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Validate the public repository with the official HACS validator
+        uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa
+        with:
+          category: integration
+          comment: "false"
+          # This is a custom repository, not a default-catalog submission.
+          # Issues are deliberately off. The integration_manifest rule also
+          # requires issue_tracker, so skip it rather than advertise a fake URL.
+          # Hassfest still validates the manifest. Core Marketplace performs its
+          # own install checks; these skips rule out default-catalog submission.
+          # https://contributors.home-assistant.io/marketplace/reference/validation/
+          ignore: issues integration_manifest

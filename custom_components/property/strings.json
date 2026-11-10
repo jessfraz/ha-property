@@ -1,0 +1,93 @@
+{
+  "title": "Property",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Property",
+        "menu_options": {
+          "app": "Connect the Home Assistant app",
+          "standalone": "Connect a standalone service"
+        }
+      },
+      "app": {
+        "title": "Start the Property app",
+        "description": "Install and start Property in Settings → Apps, then select Submit to find it. The custom integration must be installed and Home Assistant restarted first. Standalone installations can use the standalone service option instead."
+      },
+      "hassio_confirm": {
+        "title": "Connect the Property app",
+        "description": "Connect this app to Home Assistant? Connection credentials are exchanged privately through Supervisor. No token setup is needed."
+      },
+      "standalone": {
+        "title": "Connect a standalone service",
+        "description": "Enter the service origin and its integration credential. These details are needed only when the service runs outside the Home Assistant app.",
+        "data": {
+          "backend_url": "Service URL",
+          "token": "API credential"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect the service",
+        "description": "Enter the service origin and replacement credential. Home Assistant app connections normally obtain their credentials automatically.",
+        "data": {
+          "backend_url": "Service URL",
+          "token": "API credential"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the Property service. Check that it is running and try again.",
+      "invalid_auth": "The service rejected its credential.",
+      "integration_required": "This app connection needs an integration credential. Use the credential supplied by the Property app.",
+      "invalid_url": "Enter an HTTP or HTTPS origin without credentials, path, query, or fragment.",
+      "app_not_found": "The Property app has not announced a connection. Install or start it, then try again.",
+      "supervisor_required": "This Home Assistant installation does not manage apps. Connect a standalone service instead.",
+      "supervisor_unavailable": "Cannot contact Home Assistant Supervisor. Try again after it is available.",
+      "multiple_apps": "Several Property apps are available. Use the discovered integration card for the app you want."
+    },
+    "abort": {
+      "single_instance_allowed": "Only one Property backend can be configured.",
+      "reauth_successful": "The service credential was updated.",
+      "invalid_discovery": "The app announced incomplete or invalid connection details. Restart or update the app and try again.",
+      "already_configured": "This Property app is already connected.",
+      "unique_id_mismatch": "This is a different app from the existing connection."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "needs_attention": {
+        "name": "Needs attention"
+      },
+      "known_balance": {
+        "name": "Latest observed balance"
+      },
+      "last_observed": {
+        "name": "Evidence last observed"
+      },
+      "coverage": {
+        "name": "County coverage"
+      }
+    }
+  },
+  "issues": {
+    "backend_unavailable": {
+      "title": "Property service unavailable",
+      "description": "Property could not refresh the ledger. Existing evidence is retained; an outage is not an empty ledger. Check the app connection."
+    },
+    "coverage_gap": {
+      "title": "Property county evidence is incomplete",
+      "description": "One or more authoritative county capabilities are missing, partial, unsupported, or unavailable. Review coverage in Property. Unknown balances are not zero."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Property options",
+        "description": "Assist is optional. Read-only property queries require this setting, entity exposure, and the calling user’s permission.",
+        "data": {
+          "allow_assist": "Allow read-only Assist queries",
+          "notifications": "Show tax attention notifications"
+        }
+      }
+    }
+  }
+}

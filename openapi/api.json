@@ -1,0 +1,2049 @@
+{
+  "components": {
+    "responses": {
+      "Error": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Error"
+      }
+    },
+    "schemas": {
+      "Allocation": {
+        "additionalProperties": false,
+        "properties": {
+          "amount_cents": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "bill": {
+            "$ref": "#/components/schemas/BillIdentity"
+          },
+          "installment": {
+            "format": "uint8",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "amount_cents",
+          "bill",
+          "installment"
+        ],
+        "type": "object"
+      },
+      "ApplyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "type": "string"
+          },
+          "if_match": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "preview": {
+            "$ref": "#/components/schemas/Preview"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "if_match",
+          "preview"
+        ],
+        "type": "object"
+      },
+      "ApplyResult": {
+        "properties": {
+          "added": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "duplicates": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "added",
+          "duplicates",
+          "replayed",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "Assessment": {
+        "additionalProperties": false,
+        "properties": {
+          "assessed_value_cents": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "fiscal_year": {
+            "format": "uint16",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assessed_value_cents",
+          "description",
+          "fiscal_year"
+        ],
+        "type": "object"
+      },
+      "Balance": {
+        "additionalProperties": false,
+        "properties": {
+          "amount_cents": {
+            "description": "None records an explicitly unknown balance, never a zero.",
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/BalanceScope"
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "type": "object"
+      },
+      "BalanceScope": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "scope": {
+                "enum": [
+                  "property"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "scope"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bill": {
+                "$ref": "#/components/schemas/BillIdentity"
+              },
+              "scope": {
+                "enum": [
+                  "bill"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bill",
+              "scope"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bill": {
+                "$ref": "#/components/schemas/BillIdentity"
+              },
+              "number": {
+                "format": "uint8",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "scope": {
+                "enum": [
+                  "installment"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bill",
+              "number",
+              "scope"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BillIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "fiscal_year": {
+            "format": "uint16",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "jurisdiction": {
+            "$ref": "#/components/schemas/CountyFips"
+          },
+          "parcel": {
+            "$ref": "#/components/schemas/ParcelId"
+          },
+          "sequence": {
+            "type": "string"
+          },
+          "source_version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fiscal_year",
+          "jurisdiction",
+          "parcel",
+          "sequence",
+          "source_version"
+        ],
+        "type": "object"
+      },
+      "BillKind": {
+        "enum": [
+          "annual",
+          "supplemental"
+        ],
+        "type": "string"
+      },
+      "BillView": {
+        "properties": {
+          "bill_kind": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BillKind"
+              }
+            ],
+            "nullable": true
+          },
+          "id": {
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/BillIdentity"
+          },
+          "installments": {
+            "items": {
+              "$ref": "#/components/schemas/InstallmentView"
+            },
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "type": "array"
+          },
+          "latest_balance": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Observation"
+              }
+            ],
+            "nullable": true
+          },
+          "missing_notice": {
+            "type": "boolean"
+          },
+          "notice": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Observation"
+              }
+            ],
+            "nullable": true
+          },
+          "superseded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "identity",
+          "installments",
+          "issues",
+          "missing_notice",
+          "superseded"
+        ],
+        "type": "object"
+      },
+      "BindingKey": {
+        "additionalProperties": false,
+        "properties": {
+          "jurisdiction": {
+            "$ref": "#/components/schemas/CountyFips"
+          },
+          "parcel": {
+            "$ref": "#/components/schemas/ParcelId"
+          }
+        },
+        "required": [
+          "jurisdiction",
+          "parcel"
+        ],
+        "type": "object"
+      },
+      "CountyFips": {
+        "description": "Five digits: two state digits followed by three county digits. Never a ZIP.",
+        "type": "string"
+      },
+      "CountySyncPage": {
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/BindingKey"
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/components/schemas/Coverage"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "nullable": true,
+            "type": "string"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/Observation"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "binding",
+          "coverage",
+          "observations"
+        ],
+        "type": "object"
+      },
+      "Coverage": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "$ref": "#/components/schemas/CoverageCapability"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CoverageStatus"
+          }
+        },
+        "required": [
+          "capability",
+          "checked_at",
+          "detail",
+          "status"
+        ],
+        "type": "object"
+      },
+      "CoverageCapability": {
+        "enum": [
+          "notices",
+          "assessments",
+          "balances",
+          "payments"
+        ],
+        "type": "string"
+      },
+      "CoverageStatus": {
+        "enum": [
+          "complete",
+          "partial",
+          "unavailable",
+          "unsupported"
+        ],
+        "type": "string"
+      },
+      "Error": {
+        "description": "Error information from a response.",
+        "properties": {
+          "error_code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "Evidence": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "type": "string"
+          },
+          "effective_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceKind"
+          },
+          "url": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "effective_at",
+          "observed_at",
+          "source"
+        ],
+        "type": "object"
+      },
+      "Health": {
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "ImportInput": {
+        "additionalProperties": false,
+        "properties": {
+          "coverage": {
+            "items": {
+              "$ref": "#/components/schemas/Coverage"
+            },
+            "type": "array"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/Observation"
+            },
+            "type": "array"
+          },
+          "property": {
+            "$ref": "#/components/schemas/PropertyBinding"
+          }
+        },
+        "required": [
+          "coverage",
+          "observations",
+          "property"
+        ],
+        "type": "object"
+      },
+      "Installment": {
+        "additionalProperties": false,
+        "properties": {
+          "amount_cents": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "delinquent_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "due_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "number": {
+            "format": "uint8",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "amount_cents",
+          "delinquent_at",
+          "due_date",
+          "number",
+          "timezone"
+        ],
+        "type": "object"
+      },
+      "InstallmentState": {
+        "enum": [
+          "unknown",
+          "open",
+          "pending_payment",
+          "paid",
+          "delinquent",
+          "contradiction"
+        ],
+        "type": "string"
+      },
+      "InstallmentView": {
+        "properties": {
+          "amount_cents": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "bill_id": {
+            "type": "string"
+          },
+          "county_balance_cents": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "delinquent_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "due_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "estimated_remaining_cents": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/BillIdentity"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "type": "array"
+          },
+          "number": {
+            "format": "uint8",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/InstallmentState"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "amount_cents",
+          "bill_id",
+          "delinquent_at",
+          "due_date",
+          "evidence",
+          "id",
+          "identity",
+          "issues",
+          "number",
+          "state",
+          "timezone"
+        ],
+        "type": "object"
+      },
+      "Issue": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "observation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/IssueScope"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "observation_ids"
+        ],
+        "type": "object"
+      },
+      "IssueScope": {
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "property"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "bill": {
+                "$ref": "#/components/schemas/BillIdentity"
+              },
+              "kind": {
+                "enum": [
+                  "bill"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bill",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "bill": {
+                "$ref": "#/components/schemas/BillIdentity"
+              },
+              "kind": {
+                "enum": [
+                  "installment"
+                ],
+                "type": "string"
+              },
+              "number": {
+                "format": "uint8",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "bill",
+              "kind",
+              "number"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "capability": {
+                "$ref": "#/components/schemas/CoverageCapability"
+              },
+              "kind": {
+                "enum": [
+                  "capability"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "capability",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Notice": {
+        "additionalProperties": false,
+        "properties": {
+          "bill_kind": {
+            "$ref": "#/components/schemas/BillKind"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/BillIdentity"
+          },
+          "installments": {
+            "items": {
+              "$ref": "#/components/schemas/Installment"
+            },
+            "type": "array"
+          },
+          "supersedes": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BillIdentity"
+              }
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "bill_kind",
+          "identity",
+          "installments"
+        ],
+        "type": "object"
+      },
+      "Observation": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/BindingKey"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/Evidence"
+          },
+          "id": {
+            "type": "string"
+          },
+          "observation": {
+            "$ref": "#/components/schemas/ObservationData"
+          }
+        },
+        "required": [
+          "binding",
+          "evidence",
+          "id",
+          "observation"
+        ],
+        "type": "object"
+      },
+      "ObservationData": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Notice"
+              },
+              "kind": {
+                "enum": [
+                  "notice"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "data",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Assessment"
+              },
+              "kind": {
+                "enum": [
+                  "assessment"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "data",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Balance"
+              },
+              "kind": {
+                "enum": [
+                  "balance"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "data",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Payment"
+              },
+              "kind": {
+                "enum": [
+                  "payment"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "data",
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Page_for_BillView": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BillView"
+            },
+            "type": "array"
+          },
+          "next_page": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_for_InstallmentView": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InstallmentView"
+            },
+            "type": "array"
+          },
+          "next_page": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "Page_for_Observation": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Observation"
+            },
+            "type": "array"
+          },
+          "next_page": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ParcelId": {
+        "type": "string"
+      },
+      "Payment": {
+        "additionalProperties": false,
+        "properties": {
+          "allocations": {
+            "items": {
+              "$ref": "#/components/schemas/Allocation"
+            },
+            "type": "array"
+          },
+          "amount_cents": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reference": {
+            "description": "Stable across lifecycle events. Different observations retain the history.",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PaymentStatus"
+          }
+        },
+        "required": [
+          "allocations",
+          "amount_cents",
+          "reference",
+          "status"
+        ],
+        "type": "object"
+      },
+      "PaymentStatus": {
+        "enum": [
+          "submitted",
+          "bank_settled",
+          "county_posted",
+          "reversed",
+          "refunded"
+        ],
+        "type": "string"
+      },
+      "Preview": {
+        "additionalProperties": false,
+        "properties": {
+          "added": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "duplicate_ids": {
+            "default": [],
+            "description": "Exact IDs already present before this import. File-internal duplicates are still counted in duplicates, but their first occurrence is new.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "duplicates": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/components/schemas/ImportInput"
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PreviewSummary"
+          }
+        },
+        "required": [
+          "added",
+          "duplicates",
+          "hash",
+          "input",
+          "revision",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "PreviewSummary": {
+        "description": "A preview carries its exact import once, not repeated bill/evidence trees.",
+        "properties": {
+          "bill_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "installment_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "issue_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "known_balance_cents": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "needs_attention": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bill_count",
+          "installment_count",
+          "issue_count",
+          "needs_attention"
+        ],
+        "type": "object"
+      },
+      "PropertyBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmation": {
+            "$ref": "#/components/schemas/Evidence"
+          },
+          "confirmed_at": {
+            "description": "Confirmed by the user against authoritative county parcel evidence.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/components/schemas/BindingKey"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation",
+          "confirmed_at",
+          "key",
+          "label"
+        ],
+        "type": "object"
+      },
+      "PropertyView": {
+        "properties": {
+          "coverage": {
+            "items": {
+              "$ref": "#/components/schemas/Coverage"
+            },
+            "type": "array"
+          },
+          "property": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PropertyBinding"
+              }
+            ],
+            "nullable": true
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "coverage",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "Reconciliation": {
+        "properties": {
+          "assessment_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "bills": {
+            "items": {
+              "$ref": "#/components/schemas/BillView"
+            },
+            "type": "array"
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/components/schemas/Coverage"
+            },
+            "type": "array"
+          },
+          "installments": {
+            "items": {
+              "$ref": "#/components/schemas/InstallmentView"
+            },
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "type": "array"
+          },
+          "known_balance_cents": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "last_observed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "latest_balance": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Observation"
+              }
+            ],
+            "nullable": true
+          },
+          "needs_attention": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "payment_count": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "revision": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "assessment_count",
+          "bills",
+          "coverage",
+          "installments",
+          "issues",
+          "needs_attention",
+          "payment_count",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "SourceKind": {
+        "enum": [
+          "county",
+          "bank",
+          "owner_document"
+        ],
+        "type": "string"
+      },
+      "SyncRun": {
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/components/schemas/Coverage"
+            },
+            "type": "array"
+          },
+          "error_code": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "page": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CountySyncPage"
+              }
+            ],
+            "nullable": true
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SyncStatus"
+          }
+        },
+        "required": [
+          "coverage",
+          "id",
+          "started_at",
+          "status"
+        ],
+        "type": "object"
+      },
+      "SyncStatus": {
+        "enum": [
+          "running",
+          "succeeded",
+          "partial",
+          "unavailable",
+          "unsupported",
+          "interrupted"
+        ],
+        "type": "string"
+      },
+      "System": {
+        "properties": {
+          "api_version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          },
+          "schema_version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "service": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_version",
+          "role",
+          "schema_version",
+          "service",
+          "version"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Evidence-backed property tax ledger. Bearer authentication or trusted HA ingress. Imports require exact preview hash, If-Match revision and an idempotency key. No payment submission or mark-paid API.",
+    "title": "Property API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "index",
+        "responses": {
+          "default": {
+            "content": {
+              "*/*": {
+                "schema": {}
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "Open the property ledger dashboard.",
+        "tags": [
+          "web"
+        ]
+      }
+    },
+    "/app.js": {
+      "get": {
+        "operationId": "app_js",
+        "responses": {
+          "default": {
+            "content": {
+              "*/*": {
+                "schema": {}
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "web"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "Check database readiness without exposing tax evidence or credentials.",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/kit.css": {
+      "get": {
+        "operationId": "kit_css",
+        "responses": {
+          "default": {
+            "content": {
+              "*/*": {
+                "schema": {}
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "web"
+        ]
+      }
+    },
+    "/kit.js": {
+      "get": {
+        "operationId": "kit_js",
+        "responses": {
+          "default": {
+            "content": {
+              "*/*": {
+                "schema": {}
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "web"
+        ]
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "schema",
+        "responses": {
+          "default": {
+            "content": {
+              "*/*": {
+                "schema": {}
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "Read the schema generated from the running service's registered typed endpoints.",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/style.css": {
+      "get": {
+        "operationId": "app_css",
+        "responses": {
+          "default": {
+            "content": {
+              "*/*": {
+                "schema": {}
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "web"
+        ]
+      }
+    },
+    "/v1/imports": {
+      "post": {
+        "operationId": "apply",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResult"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "Apply the exact preview with optimistic revision and durable idempotency protection.",
+        "tags": [
+          "imports"
+        ]
+      }
+    },
+    "/v1/imports/preview": {
+      "post": {
+        "operationId": "preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preview"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "Validate a structured evidence import and preview its deterministic reconciliation.",
+        "tags": [
+          "imports"
+        ]
+      }
+    },
+    "/v1/property": {
+      "get": {
+        "operationId": "property",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PropertyView"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "Read the confirmed county/parcel binding and collection coverage.",
+        "tags": [
+          "property"
+        ]
+      }
+    },
+    "/v1/summary": {
+      "get": {
+        "operationId": "summary",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reconciliation"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "Reconcile notices, scoped balances and explicit payment allocations.",
+        "tags": [
+          "tax"
+        ]
+      }
+    },
+    "/v1/sync": {
+      "post": {
+        "operationId": "sync_request",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncRun"
+                }
+              }
+            },
+            "description": "successful creation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "Attempt deterministic county collection and retain explicit partial/unavailable coverage.",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/v1/sync/{id}": {
+      "get": {
+        "operationId": "sync_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncRun"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "Read a durable county sync receipt, including failure and coverage details.",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/v1/system": {
+      "get": {
+        "operationId": "system",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/System"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "Read the service version, schema version and authenticated credential role.",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/v1/tax/assessments": {
+      "get": {
+        "operationId": "assessments",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "uint",
+              "minimum": 0,
+              "nullable": true,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_for_Observation"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "List assessment evidence without confusing assessed values with tax bills.",
+        "tags": [
+          "tax"
+        ]
+      }
+    },
+    "/v1/tax/bills": {
+      "get": {
+        "operationId": "bills",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "uint",
+              "minimum": 0,
+              "nullable": true,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_for_BillView"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "List annual and supplemental bills, preserving source versions and missing notices.",
+        "tags": [
+          "tax"
+        ]
+      }
+    },
+    "/v1/tax/bills/{id}": {
+      "get": {
+        "operationId": "bill",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillView"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "Read a bill and its installment-specific evidence.",
+        "tags": [
+          "tax"
+        ]
+      }
+    },
+    "/v1/tax/installments": {
+      "get": {
+        "operationId": "installments",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "uint",
+              "minimum": 0,
+              "nullable": true,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_for_InstallmentView"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "List installment deadlines, states and separately scoped county balances.",
+        "tags": [
+          "tax"
+        ]
+      }
+    },
+    "/v1/tax/payments": {
+      "get": {
+        "operationId": "payments",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "format": "uint",
+              "minimum": 0,
+              "nullable": true,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_token",
+            "schema": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_for_Observation"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "List payment lifecycle evidence. This endpoint never submits a payment.",
+        "tags": [
+          "tax"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "imports"
+    },
+    {
+      "name": "property"
+    },
+    {
+      "name": "sync"
+    },
+    {
+      "name": "system"
+    },
+    {
+      "name": "tax"
+    },
+    {
+      "name": "web"
+    }
+  ]
+}

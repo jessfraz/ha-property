@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <base href="__PROPERTY_BASE__">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Property</title>
+    <link rel="stylesheet" href="kit.css">
+    <link rel="stylesheet" href="style.css">
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header id="app-header"></header>
+    <main id="main" tabindex="-1">
+      <p id="notice" hidden></p>
+      <form id="login" class="panel connection" hidden>
+        <h1>Connect to Property</h1>
+        <p class="muted">The API token stays in this tab’s memory.</p>
+        <label>API token<input id="token" type="password" required autocomplete="off" spellcheck="false"></label>
+        <button type="submit">Connect</button>
+      </form>
+      <div id="workspace" hidden>
+        <nav class="view-switch" aria-label="Property views">
+          <button type="button" data-view="attention" aria-pressed="true">Needs attention</button>
+          <button type="button" data-view="bills" aria-pressed="false">Bills</button>
+          <button type="button" data-view="assessments" aria-pressed="false">Assessments</button>
+          <button type="button" data-view="property" aria-pressed="false">Property</button>
+        </nav>
+        <div class="page-heading">
+          <div><p id="property-label" class="eyebrow">Tax ledger</p><h1 id="view-title">Needs attention</h1></div>
+          <p id="snapshot-status" class="muted"></p>
+        </div>
+        <div id="summary" class="summary" aria-label="Tax summary"></div>
+        <div id="attention-view">
+          <section aria-labelledby="attention-title">
+            <h2 id="attention-title" class="sr-only">Items needing attention</h2>
+            <div id="attention-items" class="stack"></div>
+          </section>
+          <section id="deadline-section" class="section" hidden aria-labelledby="deadline-title">
+            <h2 id="deadline-title">All installment evidence</h2><div id="installments" class="stack"></div>
+          </section>
+        </div>
+        <section id="bills-view" hidden aria-labelledby="bills-title">
+          <h2 id="bills-title" class="sr-only">Tax bills</h2><div id="bills" class="stack"></div>
+          <section id="payments-section" class="section" hidden aria-labelledby="payments-title">
+            <h2 id="payments-title">Payment evidence</h2>
+            <p class="muted">Submitted, bank-settled, and county-posted payments are different states. Only explicit allocations affect an installment.</p>
+            <div id="payments" class="stack"></div>
+          </section>
+        </section>
+        <section id="assessments-view" hidden aria-labelledby="assessments-title">
+          <h2 id="assessments-title" class="sr-only">Assessments</h2><div id="assessments" class="stack"></div>
+        </section>
+        <section id="property-view" hidden aria-labelledby="property-title">
+          <h2 id="property-title" class="sr-only">Property and sources</h2>
+          <div id="binding" class="panel"></div>
+          <section class="section" aria-labelledby="sources-title">
+            <div class="section-heading"><h2 id="sources-title">County coverage</h2><button id="sync" type="button" class="quiet">Check county source</button></div>
+            <p id="sync-status" role="status" aria-live="polite" class="muted"></p>
+            <div id="coverage" class="stack"></div>
+          </section>
+          <aside class="panel section">
+            <h2>Evidence, not assumptions</h2>
+            <p>Unknown balances stay unknown. A missing notice stays unresolved. Annual and supplemental bills are tracked separately, including adjusted versions.</p>
+            <p class="muted">Property does not submit county request forms, make payments, or change existing calendar reminders.</p>
+          </aside>
+        </section>
+      </div>
+    </main>
+    <footer id="app-footer"></footer>
+    <dialog id="bill-detail" aria-labelledby="bill-title">
+      <div class="dialog-heading"><h2 id="bill-title">Bill details</h2><button type="button" id="close-bill" class="quiet" aria-label="Close bill details">Close</button></div>
+      <div id="bill-content"></div>
+    </dialog>
+    <dialog id="import-dialog" aria-labelledby="import-title">
+      <div class="dialog-heading"><h2 id="import-title">Import evidence</h2><button type="button" id="close-import" class="quiet" aria-label="Close import">Close</button></div>
+      <p>Review a structured evidence file before adding it to the ledger. Nothing is applied until the preview is confirmed.</p>
+      <form id="import-form">
+        <label>Evidence file<input id="import-file" type="file" accept="application/json,.json"></label>
+        <details id="paste-evidence"><summary>Paste structured evidence instead</summary><label>Evidence JSON<textarea id="import-input" rows="10" spellcheck="false" autocomplete="off"></textarea></label></details>
+        <p id="file-status" class="muted"></p>
+        <button id="preview-import" type="submit">Preview import</button>
+      </form>
+      <p id="import-notice" hidden></p>
+      <section id="import-preview" class="section" hidden aria-labelledby="preview-title">
+        <h3 id="preview-title">Review changes</h3>
+        <div id="preview-content"></div>
+        <label id="confirm-binding-label" class="check" hidden><input id="confirm-binding" type="checkbox">The county FIPS and parcel match the property on the official county record.</label>
+        <button id="apply-import" type="button">Apply reviewed import</button>
+      </section>
+    </dialog>
+  </body>
+</html>

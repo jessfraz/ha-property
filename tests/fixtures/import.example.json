@@ -1,0 +1,254 @@
+{
+  "property": {
+    "key": {
+      "jurisdiction": "06037",
+      "parcel": "EXAMPLE-PARCEL-001"
+    },
+    "label": "Example property",
+    "confirmed_at": "2026-11-10T10:21:36.385618+00:00",
+    "confirmation": {
+      "source": "county",
+      "document": "Fictional county record",
+      "url": "https://example.invalid/evidence",
+      "observed_at": "2026-11-10T10:21:36.385618+00:00",
+      "effective_at": "2026-11-10T10:21:36.385618+00:00"
+    }
+  },
+  "observations": [
+    {
+      "id": "annual-notice",
+      "binding": {
+        "jurisdiction": "06037",
+        "parcel": "EXAMPLE-PARCEL-001"
+      },
+      "evidence": {
+        "source": "county",
+        "document": "Fictional county record",
+        "url": "https://example.invalid/evidence",
+        "observed_at": "2026-11-10T10:21:36.385618+00:00",
+        "effective_at": "2026-11-10T10:21:36.385618+00:00"
+      },
+      "observation": {
+        "kind": "notice",
+        "data": {
+          "identity": {
+            "jurisdiction": "06037",
+            "parcel": "EXAMPLE-PARCEL-001",
+            "fiscal_year": 2030,
+            "sequence": "ANNUAL",
+            "source_version": "1"
+          },
+          "bill_kind": "annual",
+          "supersedes": null,
+          "installments": [
+            {
+              "number": 1,
+              "amount_cents": 60000,
+              "due_date": "2030-11-01",
+              "delinquent_at": "2030-12-11T01:00:00Z",
+              "timezone": "America/Los_Angeles"
+            },
+            {
+              "number": 2,
+              "amount_cents": 60000,
+              "due_date": "2031-02-01",
+              "delinquent_at": "2031-04-11T00:00:00Z",
+              "timezone": "America/Los_Angeles"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "supplemental-notice",
+      "binding": {
+        "jurisdiction": "06037",
+        "parcel": "EXAMPLE-PARCEL-001"
+      },
+      "evidence": {
+        "source": "county",
+        "document": "Fictional county record",
+        "url": "https://example.invalid/evidence",
+        "observed_at": "2026-11-10T10:21:36.385618+00:00",
+        "effective_at": "2026-11-10T10:21:36.385618+00:00"
+      },
+      "observation": {
+        "kind": "notice",
+        "data": {
+          "identity": {
+            "jurisdiction": "06037",
+            "parcel": "EXAMPLE-PARCEL-001",
+            "fiscal_year": 2030,
+            "sequence": "SUPPLEMENTAL",
+            "source_version": "1"
+          },
+          "bill_kind": "supplemental",
+          "supersedes": null,
+          "installments": [
+            {
+              "number": 1,
+              "amount_cents": 30000,
+              "due_date": "2030-11-01",
+              "delinquent_at": "2030-12-11T01:00:00Z",
+              "timezone": "America/Los_Angeles"
+            },
+            {
+              "number": 2,
+              "amount_cents": 30000,
+              "due_date": "2031-02-01",
+              "delinquent_at": "2031-04-11T00:00:00Z",
+              "timezone": "America/Los_Angeles"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "split-payment",
+      "binding": {
+        "jurisdiction": "06037",
+        "parcel": "EXAMPLE-PARCEL-001"
+      },
+      "evidence": {
+        "source": "county",
+        "document": "Fictional county record",
+        "url": "https://example.invalid/evidence",
+        "observed_at": "2026-11-10T10:21:36.385618+00:00",
+        "effective_at": "2026-11-10T10:21:36.385618+00:00"
+      },
+      "observation": {
+        "kind": "payment",
+        "data": {
+          "reference": "FICTIONAL-PAYMENT-001",
+          "status": "county_posted",
+          "amount_cents": 90000,
+          "allocations": [
+            {
+              "bill": {
+                "jurisdiction": "06037",
+                "parcel": "EXAMPLE-PARCEL-001",
+                "fiscal_year": 2030,
+                "sequence": "ANNUAL",
+                "source_version": "1"
+              },
+              "installment": 1,
+              "amount_cents": 60000
+            },
+            {
+              "bill": {
+                "jurisdiction": "06037",
+                "parcel": "EXAMPLE-PARCEL-001",
+                "fiscal_year": 2030,
+                "sequence": "SUPPLEMENTAL",
+                "source_version": "1"
+              },
+              "installment": 1,
+              "amount_cents": 30000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "missing-notice-balance",
+      "binding": {
+        "jurisdiction": "06037",
+        "parcel": "EXAMPLE-PARCEL-001"
+      },
+      "evidence": {
+        "source": "county",
+        "document": "Fictional county record",
+        "url": "https://example.invalid/evidence",
+        "observed_at": "2026-11-10T10:21:36.385618+00:00",
+        "effective_at": "2026-11-10T10:21:36.385618+00:00"
+      },
+      "observation": {
+        "kind": "balance",
+        "data": {
+          "scope": {
+            "scope": "bill",
+            "bill": {
+              "jurisdiction": "06037",
+              "parcel": "EXAMPLE-PARCEL-001",
+              "fiscal_year": 2030,
+              "sequence": "MISSING",
+              "source_version": "1"
+            }
+          },
+          "amount_cents": null
+        }
+      }
+    },
+    {
+      "id": "property-balance",
+      "binding": {
+        "jurisdiction": "06037",
+        "parcel": "EXAMPLE-PARCEL-001"
+      },
+      "evidence": {
+        "source": "county",
+        "document": "Fictional county record",
+        "url": "https://example.invalid/evidence",
+        "observed_at": "2026-11-10T10:21:36.385618+00:00",
+        "effective_at": "2026-11-10T10:21:36.385618+00:00"
+      },
+      "observation": {
+        "kind": "balance",
+        "data": {
+          "scope": {
+            "scope": "property"
+          },
+          "amount_cents": 90000
+        }
+      }
+    },
+    {
+      "id": "assessment",
+      "binding": {
+        "jurisdiction": "06037",
+        "parcel": "EXAMPLE-PARCEL-001"
+      },
+      "evidence": {
+        "source": "county",
+        "document": "Fictional county record",
+        "url": "https://example.invalid/evidence",
+        "observed_at": "2026-11-10T10:21:36.385618+00:00",
+        "effective_at": "2026-11-10T10:21:36.385618+00:00"
+      },
+      "observation": {
+        "kind": "assessment",
+        "data": {
+          "fiscal_year": 2030,
+          "assessed_value_cents": 42000000,
+          "description": "Fictional assessment <script>not instructions</script>"
+        }
+      }
+    }
+  ],
+  "coverage": [
+    {
+      "capability": "notices",
+      "status": "partial",
+      "checked_at": "2026-11-10T10:21:36.385618+00:00",
+      "detail": "Fictional imported evidence only; county coverage is not complete."
+    },
+    {
+      "capability": "assessments",
+      "status": "partial",
+      "checked_at": "2026-11-10T10:21:36.385618+00:00",
+      "detail": "Fictional imported evidence only; county coverage is not complete."
+    },
+    {
+      "capability": "balances",
+      "status": "partial",
+      "checked_at": "2026-11-10T10:21:36.385618+00:00",
+      "detail": "Fictional imported evidence only; county coverage is not complete."
+    },
+    {
+      "capability": "payments",
+      "status": "partial",
+      "checked_at": "2026-11-10T10:21:36.385618+00:00",
+      "detail": "Fictional imported evidence only; county coverage is not complete."
+    }
+  ]
+}
