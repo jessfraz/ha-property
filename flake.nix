@@ -16,13 +16,16 @@
     };
   in {
     devShells = eachSystem (system: let pkgs = pkgsFor system; in {
-      default = pkgs.mkShell {
+      default = pkgs.mkShell ({
         packages = with pkgs; [
           (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
           python314 uv cmake pkg-config sqlite jq just cargo-deny
           actionlint shellcheck nodejs
         ];
-      };
+      } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        # Playwright's greenlet wheel links the C++ runtime through Nix Python.
+        LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [pkgs.stdenv.cc.cc.lib];
+      });
     });
     packages = eachSystem (system: let
       pkgs = pkgsFor system;
