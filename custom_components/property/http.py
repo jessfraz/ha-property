@@ -23,7 +23,7 @@ _ROUTES = (
         re.compile(r"tax/bills/[A-Za-z0-9_-]{1,128}|sync/[A-Za-z0-9_-]{1,128}"),
         frozenset({"GET"}),
     ),
-    (re.compile(r"imports/preview|imports|sync"), frozenset({"POST"})),
+    (re.compile(r"property/resolve|imports/preview|imports|sync"), frozenset({"POST"})),
 )
 _LIST_PATHS = {"tax/bills", "tax/installments", "tax/assessments", "tax/payments"}
 

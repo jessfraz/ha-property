@@ -151,8 +151,15 @@ async def test_real_ledger_projects_exact_installments_and_outage_coverage_to_ha
     assert len(events) == 2
     assert all("installment 2" in event["summary"] for event in events)
     response = await client.post("/api/property/v1/sync")
-    assert response.status == 201
+    assert response.status == 202
     run = await response.json()
+    assert run["status"] == "running"
+    async with asyncio.timeout(5):
+        while run["status"] == "running":
+            await asyncio.sleep(0.01)
+            response = await client.get(f"/api/property/v1/sync/{run['id']}")
+            assert response.status == 200
+            run = await response.json()
     assert run["status"] == "unavailable"
     response = await client.get(f"/api/property/v1/sync/{run['id']}")
     assert response.status == 200 and (await response.json())["id"] == run["id"]

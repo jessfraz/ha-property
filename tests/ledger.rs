@@ -1278,3 +1278,73 @@ async fn oversized_projections_are_rejected_before_preview_and_smaller_previews_
     );
     assert!(matches!(oversized.validate(), Err(TaxError::Capacity)));
 }
+
+#[test]
+fn separately_identified_county_return_cannot_leave_prior_credit_paid() {
+    let bill = identity("000", "unversioned");
+    let posted_at = now() - Duration::days(2);
+    let returned_at = now() - Duration::days(1);
+    let mut posted = payment(
+        "county-posted",
+        PaymentStatus::CountyPosted,
+        vec![allocation(&bill, 1)],
+    );
+    posted.evidence = evidence(SourceKind::County, "fictional posted record", posted_at);
+    if let ObservationData::Payment(value) = &mut posted.observation {
+        value.reference = "FICTIONAL-COUNTY-ID-101".into();
+    }
+    let mut returned = payment(
+        "county-returned",
+        PaymentStatus::Refunded,
+        vec![allocation(&bill, 1)],
+    );
+    returned.evidence = evidence(
+        SourceKind::County,
+        "fictional separate refund record",
+        returned_at,
+    );
+    if let ObservationData::Payment(value) = &mut returned.observation {
+        value.reference = "FICTIONAL-COUNTY-ID-102".into();
+    }
+    let mut snapshot = Snapshot {
+        revision: 1,
+        property: Some(binding()),
+        coverage: Vec::new(),
+        observations: vec![notice("annual", &bill, BillKind::Annual), posted, returned],
+    };
+    let result = reconcile(&snapshot, now());
+    assert_eq!(
+        result
+            .installments
+            .iter()
+            .find(|item| item.number == 1)
+            .unwrap()
+            .state,
+        InstallmentState::Contradiction
+    );
+    assert_ne!(
+        result
+            .installments
+            .iter()
+            .find(|item| item.number == 2)
+            .unwrap()
+            .state,
+        InstallmentState::Paid
+    );
+    snapshot.observations.push(balance(
+        "later-county-zero",
+        BalanceScope::Installment { bill, number: 1 },
+        Some(0),
+        now(),
+    ));
+    let result = reconcile(&snapshot, now());
+    assert_eq!(
+        result
+            .installments
+            .iter()
+            .find(|item| item.number == 1)
+            .unwrap()
+            .state,
+        InstallmentState::Paid
+    );
+}

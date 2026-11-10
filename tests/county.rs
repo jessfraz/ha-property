@@ -1,9 +1,12 @@
 use chrono::Utc;
 use property::{
-    county::{CollectionMode, County, CountyError, CountySyncRequest, los_angeles::LosAngeles},
+    county::{
+        CollectionMode, County, CountyError, CountySyncPage, CountySyncRequest,
+        los_angeles::LosAngeles,
+    },
     tax::ledger::{
-        Balance, BalanceScope, BillIdentity, BindingKey, CountyFips, CoverageStatus, Evidence,
-        Observation, ObservationData, ParcelId, PropertyBinding, SourceKind,
+        Balance, BalanceScope, BillIdentity, BindingKey, CountyFips, Evidence, Observation,
+        ObservationData, ParcelId, PropertyBinding, SourceKind,
     },
 };
 
@@ -26,36 +29,38 @@ fn property() -> PropertyBinding {
     }
 }
 
-#[tokio::test]
-async fn la_collection_keeps_unavailable_coverage_explicit_and_never_claims_no_tax_due() {
+#[test]
+fn la_capabilities_expose_real_reads_and_keep_the_human_balance_boundary_explicit() {
     let county = LosAngeles::new();
-    let property = property();
-    assert_eq!(county.jurisdiction(), property.key.jurisdiction);
-    assert_eq!(county.capabilities().len(), 4);
+    let capabilities = county.capabilities();
+    assert_eq!(capabilities.len(), 4);
     assert!(
-        county
-            .capabilities()
+        capabilities
             .iter()
-            .all(|capability| capability.mode == CollectionMode::ManualImport)
+            .any(|value| value.mode == CollectionMode::HttpApi)
     );
-    let page = county
-        .sync(CountySyncRequest {
-            property: property.clone(),
-            cursor: None,
-            requested_at: Utc::now(),
-        })
-        .await
-        .unwrap();
-    page.validate_binding(&property.key).unwrap();
-    assert!(page.observations.is_empty());
-    assert_eq!(page.coverage.len(), 4);
-    assert!(
-        page.coverage
+    assert_eq!(
+        capabilities
             .iter()
-            .all(|coverage| coverage.status == CoverageStatus::Unavailable
-                && !coverage.detail.is_empty())
+            .filter(|value| value.mode == CollectionMode::HttpForm)
+            .count(),
+        2
     );
-    assert!(page.next_cursor.is_none());
+    assert_eq!(
+        capabilities
+            .iter()
+            .filter(|value| value.mode == CollectionMode::ManualImport)
+            .count(),
+        1
+    );
+}
+fn empty_page(property: &PropertyBinding) -> CountySyncPage {
+    CountySyncPage {
+        binding: property.key.clone(),
+        observations: Vec::new(),
+        coverage: Vec::new(),
+        next_cursor: None,
+    }
 }
 
 #[tokio::test]
@@ -84,14 +89,7 @@ async fn wrong_county_wrong_parcel_or_cursor_is_not_an_empty_success() {
         Err(CountyError::InvalidCursor)
     ));
     let confirmed = property();
-    let mut page = county
-        .sync(CountySyncRequest {
-            property: confirmed.clone(),
-            cursor: None,
-            requested_at: Utc::now(),
-        })
-        .await
-        .unwrap();
+    let mut page = empty_page(&confirmed);
     page.binding.parcel = ParcelId::try_from("FICTIONAL-OTHER-PARCEL".to_owned()).unwrap();
     assert!(matches!(
         page.validate_binding(&confirmed.key),
@@ -101,16 +99,8 @@ async fn wrong_county_wrong_parcel_or_cursor_is_not_an_empty_success() {
 
 #[tokio::test]
 async fn a_correct_page_envelope_cannot_hide_a_foreign_embedded_bill() {
-    let county = LosAngeles::new();
     let confirmed = property();
-    let mut page = county
-        .sync(CountySyncRequest {
-            property: confirmed.clone(),
-            cursor: None,
-            requested_at: Utc::now(),
-        })
-        .await
-        .unwrap();
+    let mut page = empty_page(&confirmed);
     page.observations.push(Observation {
         id: "fictional-foreign-bill".to_owned(),
         binding: confirmed.key.clone(),

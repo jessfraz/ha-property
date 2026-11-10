@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use chrono::Utc;
 use dropshot::{
     ApiDescription, Body, ClientErrorStatusCode as Status, ConfigDropshot, HttpError,
-    HttpResponseCreated, HttpResponseHeaders, HttpResponseOk, HttpServer, HttpServerStarter, Path,
+    HttpResponseAccepted, HttpResponseHeaders, HttpResponseOk, HttpServer, HttpServerStarter, Path,
     Query, RequestContext, TypedBody, endpoint,
 };
 use http::Response;
@@ -18,6 +18,10 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::{
+    county::{
+        CountyError,
+        los_angeles::assessment::{self, AddressCandidates},
+    },
     store::{ApplyRequest, ApplyResult, ObservationKind, Preview, Store},
     sync::{SyncRun, SyncStore},
     tax::{
@@ -71,6 +75,12 @@ pub struct PropertyView {
     pub revision: i64,
     pub property: Option<PropertyBinding>,
     pub coverage: Vec<Coverage>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ResolveAddress {
+    address: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Page<T> {
@@ -356,6 +366,37 @@ async fn property(
         Some(snapshot.revision),
     ))
 }
+
+/// Resolve a bounded LA County address candidate set without selecting or saving a parcel.
+#[endpoint {method=POST,path="/v1/property/resolve",tags=["property"],request_body_max_bytes=8192}]
+async fn resolve_property(
+    request: RequestContext<Arc<Context>>,
+    body: TypedBody<ResolveAddress>,
+) -> Result<Private<AddressCandidates>, HttpError> {
+    authenticate(&request, true)?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|_| {
+            HttpError::for_unavail(
+                Some("county_unavailable".into()),
+                "The county lookup is unavailable.".into(),
+            )
+        })?;
+    let result = assessment::address_candidates(&client, &body.into_inner().address, Utc::now())
+        .await
+        .map_err(|error| match error {
+            CountyError::InvalidEvidence(TaxError::Invalid(message)) => {
+                fail(Status::BAD_REQUEST, "invalid_input", message)
+            }
+            _ => HttpError::for_unavail(
+                Some("county_unavailable".into()),
+                "The county lookup is unavailable. No property was saved.".into(),
+            ),
+        })?;
+    Ok(private(result, None))
+}
 async fn projection(context: &Context) -> Result<Reconciliation, HttpError> {
     Ok(reconcile(&context.store.snapshot().await?, Utc::now()))
 }
@@ -591,7 +632,7 @@ async fn apply(
 #[endpoint {method=POST,path="/v1/sync",tags=["sync"]}]
 async fn sync_request(
     request: RequestContext<Arc<Context>>,
-) -> Result<HttpResponseHeaders<HttpResponseCreated<SyncRun>, PrivateHeaders>, HttpError> {
+) -> Result<HttpResponseHeaders<HttpResponseAccepted<SyncRun>, PrivateHeaders>, HttpError> {
     authenticate(&request, true)?;
     let context = request.context();
     let snapshot = context.store.snapshot().await?;
@@ -604,7 +645,7 @@ async fn sync_request(
     })?;
     let run = context.syncs.request(&context.store, binding).await?;
     Ok(HttpResponseHeaders::new(
-        HttpResponseCreated(run),
+        HttpResponseAccepted(run),
         PrivateHeaders {
             etag: None,
             cache_control: "no-store".into(),
@@ -637,7 +678,7 @@ async fn schema(request: RequestContext<Arc<Context>>) -> Result<Response<Body>,
 }
 pub fn description() -> anyhow::Result<ApiDescription<Arc<Context>>> {
     let mut api = ApiDescription::new();
-    let endpoints: [dropshot::ApiEndpoint<Arc<Context>>; 19] = [
+    let endpoints: [dropshot::ApiEndpoint<Arc<Context>>; 20] = [
         index.into(),
         app_js.into(),
         app_css.into(),
@@ -646,6 +687,7 @@ pub fn description() -> anyhow::Result<ApiDescription<Arc<Context>>> {
         health.into(),
         system.into(),
         property.into(),
+        resolve_property.into(),
         summary.into(),
         bills.into(),
         bill.into(),

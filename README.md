@@ -16,15 +16,20 @@ Add this repository to the HA app store and install **Property**. Install the
 HA's `custom_components`, restart HA, then add **Property** under integrations.
 The integration pairs with the app through authenticated Supervisor discovery.
 
-Open the app and import structured JSON evidence after confirming the county and
-exact parcel against county records. `tests/fixtures/import.example.json` is a
-fictional format example, not tax data. Previewing is read-only; applying requires
-that exact preview, revision and idempotency key.
+Open the app, look up the address in the county's published records, then choose
+and confirm the exact parcel. Candidates are never selected automatically.
+Review the county/source year, especially when published records are historical.
 
-The Los Angeles adapter links official sources and reports automated collection
-as unavailable. No supported public county API is established. County notices,
-balance lookup and payment history are separate evidence. Sync does not submit
-county request forms or payments. Existing calendars are not changed.
+LA sync reads the ordinary payment-history form and county-published assessment
+rolls. Each source keeps its own freshness and coverage. Bill-viewer responses
+without a verifiable bound notice remain unavailable, and the balance viewer
+requires human reCAPTCHA verification. Neither result becomes a zero balance.
+These web forms are not advertised as stable APIs. Sync never requests support,
+submits payments, changes accounts, or changes existing calendars.
+
+Structured JSON import remains available for missing notices and other evidence.
+`tests/fixtures/import.example.json` is fictional. Previewing is read-only;
+applying requires the exact preview, revision and idempotency key.
 
 ## CLI
 
@@ -39,9 +44,11 @@ ha-property imports preview --input evidence.json > preview.json
 ha-property imports apply --preview preview.json --if-match '"0"' \
   --idempotency-key import-001
 ha-property sync request
+ha-property sync get SYNC_ID
 ```
 
 `--if-match` must be the actual quoted preview ETag, not a guessed revision.
+Sync requests return an owned job immediately; read its exact ID to check progress.
 Commands print `{status, etag, body}` JSON; failures use bounded JSON diagnostics.
 List responses include `next_page`, passed unchanged as `--page-token`.
 `--limit` is a maximum; large evidence may produce smaller pages.

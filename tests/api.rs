@@ -165,15 +165,34 @@ async fn actual_http_auth_import_pagination_sync_and_cold_restore() {
         .unwrap();
     assert_ne!(first.items[0].id, next.items[0].id);
     let before_sync = store.snapshot().await.unwrap();
-    let run: SyncRun = client
+    let response = client
         .post(format!("{origin}/v1/sync"))
         .bearer_auth(OWNER)
         .send()
         .await
-        .unwrap()
-        .json()
-        .await
         .unwrap();
+    assert_eq!(response.status(), 202);
+    let accepted: SyncRun = response.json().await.unwrap();
+    assert_eq!(accepted.status, SyncStatus::Running);
+    let run = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let run: SyncRun = client
+                .get(format!("{origin}/v1/sync/{}", accepted.id))
+                .bearer_auth(OWNER)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            if run.status != SyncStatus::Running {
+                break run;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
     assert_eq!(run.status, SyncStatus::Unavailable);
     assert_eq!(run.coverage.len(), 4);
     let receipt: SyncRun = client

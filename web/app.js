@@ -15,6 +15,17 @@ function node(tag, text = '', className = '') {
   return result;
 }
 
+/** An opaque idempotency key also works on HA's ordinary local HTTP origin. */
+function requestKey() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** @param {Error} error @param {string} fallback */
+function errorSentence(error, fallback) {
+  const message = error instanceof TypeError || error instanceof SyntaxError ? fallback : error.message;
+  return /[.!?]$/.test(message) ? message : `${message}.`;
+}
+
 const refreshButton = node('button', 'Refresh', 'quiet');
 refreshButton.type = 'button';
 refreshButton.setAttribute('aria-label', 'Refresh Property');
@@ -34,6 +45,17 @@ let preview = null;
 let previewKey = null;
 let importBusy = false;
 let fileRead = 0;
+let lookup = null;
+let selectedParcel = null;
+let setupPreview = null;
+let setupKey = null;
+let setupGeneration = 0;
+let lookupController = null;
+let setupBusy = false;
+let syncRun = null;
+let syncPolling = false;
+let syncController = null;
+let pageActive = true;
 importButton.hidden = true;
 
 /** @param {string} path @param {RequestInit} [options] */
@@ -60,9 +82,12 @@ async function api(path, options = {}) {
       preview_mismatch: 'The import no longer matches its preview. Create a new preview.',
       idempotency_conflict: 'This import key belongs to another request. Create a new preview.',
       capacity: 'The ledger or import limit was reached. Split the import into smaller evidence files.',
-      invalid_input: 'The evidence is invalid. Check its typed fields, property identity, amounts, and deadlines.',
+      invalid_input: path === 'property/resolve'
+        ? 'Check the street address, including any unit. Query wildcards are not supported.'
+        : 'The evidence is invalid. Check its typed fields, property identity, amounts, and deadlines.',
       if_match_required: 'The preview revision is required. Create a new preview.',
       database_unavailable: 'The ledger is unavailable. Existing evidence has not been replaced.',
+      county_unavailable: 'The county lookup is unavailable. No property was confirmed.',
     };
     try {
       const error = await response.json();
@@ -111,7 +136,7 @@ async function loadSnapshot() {
 }
 
 async function refresh() {
-  if (refreshing) return;
+  if (refreshing) return false;
   refreshing = true;
   refreshButton.disabled = true;
   shell.setStatus(current ? 'Refreshing…' : 'Connecting…');
@@ -128,9 +153,11 @@ async function refresh() {
     shell.setStatus('Connected', 'ok');
     setNotice(element('notice'), '');
     render();
+    return true;
   } catch (error) {
     shell.setStatus(current ? 'Refresh failed · showing previous snapshot' : 'Disconnected', current ? 'stale' : 'error');
     setNotice(element('notice'), `${error.message}${current ? ' The previous snapshot is still shown.' : ''}`, 'error');
+    return false;
   } finally {
     refreshing = false;
     refreshButton.disabled = false;
@@ -228,10 +255,10 @@ function renderAttention() {
   const { summary, property } = current;
   host.replaceChildren();
   if (!property.property) {
-    const box = empty(host, 'Confirm a property to begin', 'Import county parcel evidence with the confirmed county FIPS and parcel. An address or ZIP code alone is not a property match.');
-    const button = node('button', 'Import evidence');
+    const box = empty(host, 'Confirm a property to begin', 'Find the county’s parcel record, then explicitly confirm the exact county and parcel. A ZIP code or the first address match is not a property match.');
+    const button = node('button', 'Find county parcel');
     button.type = 'button';
-    button.addEventListener('click', openImport);
+    button.addEventListener('click', openSetup);
     if (canWrite) box.append(button);
   } else if (summary.needs_attention === 0) {
     empty(host, 'No unresolved items in this snapshot', 'This describes the imported evidence, not a guarantee that every county notice has been received. Check source coverage below.');
@@ -429,6 +456,7 @@ function renderProperty() {
   } else {
     host.append(node('p', 'Confirm the county and exact parcel against official county evidence once. Imports cannot silently change this binding.'));
   }
+  element('property-setup').hidden = Boolean(property) || !canWrite;
   const coverage = element('coverage');
   coverage.replaceChildren();
   if (!current.summary.coverage.length) empty(coverage, 'County coverage is unknown', 'No source coverage has been checked. An empty result is not evidence of a zero balance.');
@@ -439,7 +467,7 @@ function renderProperty() {
     card.append(heading, node('p', item.detail), node('p', `Checked ${date(item.checked_at, true)}`, 'record-meta'));
     coverage.append(card);
   }
-  element('sync').disabled = !property || !canWrite;
+  updateSyncButton();
 }
 
 /** @param {string} view */
@@ -455,6 +483,198 @@ function openImport() {
   if (!canWrite) return;
   element('import-dialog').showModal();
 }
+
+function openSetup() {
+  if (!canWrite || current?.property.property) return;
+  selectView('property');
+  element('setup-address').focus();
+}
+
+function clearPropertyPreview() {
+  setupPreview = null;
+  setupKey = null;
+  element('property-preview').hidden = true;
+}
+
+function updatePropertyReview() {
+  element('review-property').disabled = setupBusy || !selectedParcel || lookup?.truncated
+    || !element('confirm-parcel').checked || !element('setup-label').value.trim();
+  element('apply-property').disabled = setupBusy || !setupPreview || !element('confirm-parcel').checked;
+}
+
+function setSetupBusy(busy) {
+  setupBusy = busy;
+  for (const id of ['setup-address', 'setup-label', 'confirm-parcel', 'lookup-parcels']) element(id).disabled = busy;
+  for (const radio of element('parcel-options').querySelectorAll('input')) radio.disabled = busy || Boolean(lookup?.truncated);
+  element('property-setup').setAttribute('aria-busy', String(busy));
+  updatePropertyReview();
+}
+
+function invalidatePropertyLookup() {
+  setupGeneration += 1;
+  lookupController?.abort();
+  lookupController = null;
+  lookup = null;
+  selectedParcel = null;
+  clearPropertyPreview();
+  element('confirm-parcel').checked = false;
+  element('lookup-result').hidden = true;
+  element('property-confirmation').hidden = true;
+  element('parcel-options').replaceChildren();
+  element('lookup-parcels').disabled = setupBusy;
+  setNotice(element('setup-notice'), '');
+  updatePropertyReview();
+}
+
+/** @param {object} result */
+function showParcelCandidates(result) {
+  if (!Array.isArray(result.candidates) || result.candidates.length > 100
+      || !result.coverage || result.coverage.capability !== 'assessments'
+      || typeof result.truncated !== 'boolean'
+      || result.candidates.some(candidate => !candidate.key || candidate.key.jurisdiction !== '06037'
+        || typeof candidate.key.parcel !== 'string' || !candidate.key.parcel
+        || typeof candidate.address !== 'string' || !candidate.address
+        || !Number.isSafeInteger(candidate.roll_year) || candidate.evidence?.source !== 'county')) {
+    throw new Error('The county lookup did not return valid, county-bound parcel records. Nothing was confirmed.');
+  }
+  lookup = result;
+  const host = element('parcel-options');
+  host.replaceChildren();
+  element('lookup-result').hidden = false;
+  element('lookup-coverage').textContent = lookupNotice(result.coverage);
+  if (result.truncated) {
+    setNotice(element('setup-notice'), 'More parcels matched than can be shown. Narrow the street address, including the unit if applicable, and search again. This incomplete list cannot confirm a parcel.', 'error');
+  } else if (!result.candidates.length) {
+    setNotice(element('setup-notice'), 'No parcel match was returned. The property remains unconfirmed; this does not mean that the property does not exist or no tax is due. Check the current county record or try a more precise street address.');
+  } else {
+    setNotice(element('setup-notice'), `${result.candidates.length} candidate ${result.candidates.length === 1 ? 'parcel' : 'parcels'} returned. No parcel has been selected or confirmed.`);
+  }
+  for (const [index, candidate] of result.candidates.entries()) {
+    const card = node('article', '', 'record parcel-option');
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'county-parcel';
+    radio.id = `county-parcel-${index}`;
+    radio.value = String(index);
+    radio.disabled = result.truncated;
+    const content = node('div');
+    const caption = document.createElement('label');
+    caption.htmlFor = radio.id;
+    caption.append(node('strong', candidate.address), document.createTextNode(' '), node('span', `Parcel ${candidate.key.parcel}`, 'mono'));
+    content.append(caption);
+    facts(content, [['County', 'Los Angeles County, California'], ['County FIPS', candidate.key.jurisdiction], ['Published roll', String(candidate.roll_year)]]);
+    const evidence = node('ul', '', 'evidence-list');
+    evidence.append(evidenceItem(candidate.evidence, 'Parcel source'));
+    content.append(evidence);
+    radio.addEventListener('change', () => {
+      setupGeneration += 1;
+      selectedParcel = candidate;
+      clearPropertyPreview();
+      element('confirm-parcel').checked = false;
+      updatePropertyReview();
+    });
+    card.append(radio, content);
+    host.append(card);
+  }
+  element('parcel-candidates').hidden = !result.candidates.length;
+  element('property-confirmation').hidden = result.truncated || !result.candidates.length;
+  updatePropertyReview();
+}
+
+/** @param {object} coverage */
+function lookupNotice(coverage) {
+  const note = coverage.status === 'complete'
+    ? 'These are candidate records, not a confirmed property. Verify the current official record before confirming.'
+    : 'These published records are partial or may be stale. Verify the current official county record before confirming a parcel.';
+  return `${note} ${coverage.detail} Checked ${date(coverage.checked_at, true)}.`;
+}
+
+element('setup-address').addEventListener('input', invalidatePropertyLookup);
+element('setup-label').addEventListener('input', () => {
+  setupGeneration += 1;
+  clearPropertyPreview();
+  updatePropertyReview();
+});
+element('confirm-parcel').addEventListener('change', () => {
+  if (!element('confirm-parcel').checked) clearPropertyPreview();
+  updatePropertyReview();
+});
+element('parcel-lookup-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (setupBusy || !canWrite || current?.property.property) return;
+  invalidatePropertyLookup();
+  const generation = setupGeneration;
+  const controller = new AbortController();
+  lookupController = controller;
+  element('lookup-parcels').disabled = true;
+  setNotice(element('setup-notice'), 'Looking up published county parcel records…');
+  try {
+    const result = await api('property/resolve', { method: 'POST', body: JSON.stringify({ address: element('setup-address').value.trim() }), signal: controller.signal });
+    if (generation !== setupGeneration || current?.property.property || !canWrite) return;
+    showParcelCandidates(result);
+  } catch (error) {
+    if (generation !== setupGeneration || error.name === 'AbortError') return;
+    setNotice(element('setup-notice'), `${errorSentence(error, 'The county lookup could not be read.')} The address is still entered, and no property was confirmed.`, 'error');
+  } finally {
+    if (lookupController === controller) {
+      lookupController = null;
+      element('lookup-parcels').disabled = setupBusy;
+    }
+  }
+});
+element('review-property').addEventListener('click', async () => {
+  if (setupBusy || !selectedParcel || !lookup || lookup.truncated || !element('confirm-parcel').checked || current?.property.property) return;
+  const generation = setupGeneration;
+  const input = {
+    property: { key: selectedParcel.key, label: element('setup-label').value.trim(), confirmed_at: new Date().toISOString(), confirmation: selectedParcel.evidence },
+    observations: [], coverage: [lookup.coverage],
+  };
+  setSetupBusy(true);
+  clearPropertyPreview();
+  try {
+    const result = await api('imports/preview', { method: 'POST', body: JSON.stringify(input) });
+    if (generation !== setupGeneration || current?.property.property) return;
+    setupPreview = result;
+    setupKey = requestKey();
+    const host = element('property-preview-content');
+    host.replaceChildren(node('p', 'This confirms the property binding only. It does not establish a tax balance, settle a bill, or change an existing calendar.'));
+    facts(host, [['Property label', result.input.property.label], ['Street address', selectedParcel.address], ['County', 'Los Angeles County, California'], ['County FIPS', result.input.property.key.jurisdiction], ['Selected parcel', result.input.property.key.parcel], ['Published roll', String(selectedParcel.roll_year)], ['Ledger revision', String(result.revision)]]);
+    host.append(node('p', `Preview hash: ${result.hash}`, 'mono'));
+    const evidence = node('ul', '', 'evidence-list');
+    evidence.append(evidenceItem(result.input.property.confirmation, 'County parcel confirmation'));
+    host.append(evidence);
+    host.append(node('p', lookupNotice(lookup.coverage), 'notice'));
+    element('property-preview').hidden = false;
+    element('property-preview-title').setAttribute('tabindex', '-1');
+    element('property-preview-title').focus();
+    setNotice(element('setup-notice'), 'Review the exact county, parcel and source below. Nothing has been saved yet.');
+  } catch (error) {
+    clearPropertyPreview();
+    setNotice(element('setup-notice'), `${errorSentence(error, 'The property preview could not be read.')} No property was confirmed.`, 'error');
+  } finally { setSetupBusy(false); }
+});
+element('apply-property').addEventListener('click', async () => {
+  if (setupBusy || !setupPreview || !setupKey || !element('confirm-parcel').checked || current?.property.property) return;
+  setSetupBusy(true);
+  try {
+    const result = await api('imports', { method: 'POST', headers: { 'If-Match': `"${setupPreview.revision}"` }, body: JSON.stringify({ preview: setupPreview, if_match: setupPreview.revision, idempotency_key: setupKey }) });
+    const expected = setupPreview.input.property.key;
+    const verified = await refresh();
+    if (verified && current.property.property?.key.jurisdiction === expected.jurisdiction && current.property.property?.key.parcel === expected.parcel) {
+      clearPropertyPreview();
+      setNotice(element('notice'), 'Property confirmed. County sources can now be checked.');
+      element('binding').setAttribute('tabindex', '-1');
+      element('binding').focus();
+    } else {
+      setNotice(element('setup-notice'), `Confirmation was saved at revision ${result.revision}. Refresh to verify the current property before continuing.`, 'error');
+    }
+  } catch (error) {
+    // Preserve the exact preview and key after an uncertain write. Only an
+    // explicit retry can resubmit that same reviewed confirmation.
+    setNotice(element('setup-notice'), `${errorSentence(error, 'The confirmation response could not be read.')} Check the current property before retrying this exact confirmation.`, 'error');
+  } finally { setSetupBusy(false); }
+});
+element('setup-import').addEventListener('click', openImport);
 
 function clearPreview() {
   preview = null;
@@ -532,7 +752,7 @@ element('import-form').addEventListener('submit', async event => {
   setImportBusy(true);
   try {
     preview = await api('imports/preview', { method: 'POST', body: JSON.stringify(input) });
-    previewKey = crypto.randomUUID();
+    previewKey = requestKey();
     const host = element('preview-content');
     const summary = node('div', '', 'preview-summary');
     summary.append(node('p', `${preview.added} new observations · ${preview.duplicates} duplicates`), node('p', `Based on ledger revision ${preview.revision}`), node('p', `Preview hash: ${preview.hash}`, 'mono'));
@@ -612,20 +832,92 @@ element('apply-import').addEventListener('click', async () => {
   }
 });
 
-element('sync').addEventListener('click', async () => {
+function updateSyncButton() {
   const button = element('sync');
-  button.disabled = true;
-  element('sync-status').textContent = 'Checking county source availability…';
+  button.disabled = syncPolling || !current?.property.property || !canWrite;
+  button.textContent = syncRun?.status === 'running' ? 'Resume county check' : 'Check county source';
+}
+
+/** @param {object} run @param {string} [expected] */
+function validateSyncRun(run, expected) {
+  if (typeof run.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(run.id)
+      || (expected && run.id !== expected)
+      || !['running', 'succeeded', 'partial', 'unavailable', 'unsupported', 'interrupted'].includes(run.status)) {
+    throw new Error('Property returned an invalid county-check receipt. Refresh before continuing.');
+  }
+  return run;
+}
+
+/** @param {AbortSignal} signal */
+function waitForSync(signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 750);
+    function abort() {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      reject(new DOMException('County check display closed.', 'AbortError'));
+    }
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+  });
+}
+
+element('sync').addEventListener('click', async () => {
+  if (syncPolling || !canWrite || !current?.property.property || !pageActive) return;
+  syncPolling = true;
+  const controller = new AbortController();
+  syncController = controller;
+  let timedOut = false;
+  const deadlineTimer = setTimeout(() => { timedOut = true; controller.abort(); }, 120000);
+  updateSyncButton();
+  element('sync-status').textContent = syncRun?.status === 'running' ? 'Reading the existing county check…' : 'Starting a read-only county check…';
   try {
-    const run = await api('sync', { method: 'POST' });
-    element('sync-status').textContent = run.status === 'succeeded'
-      ? 'County check completed. Review the updated coverage below.'
-      : `County check ${label(run.status).toLowerCase()}. Unavailable sources are not empty results; existing evidence is preserved.`;
-    await refresh();
+    if (!syncRun || syncRun.status !== 'running') syncRun = validateSyncRun(await api('sync', { method: 'POST', signal: controller.signal }));
+    const id = syncRun.id;
+    const deadline = Date.now() + 120000;
+    while (syncRun.status === 'running' && Date.now() < deadline) {
+      element('sync-status').textContent = `County check is still running. Run ${id}. Existing evidence remains available.`;
+      await waitForSync(controller.signal);
+      syncRun = validateSyncRun(await api(`sync/${encodeURIComponent(id)}`, { signal: controller.signal }), id);
+    }
+    if (syncRun.status === 'running') {
+      element('sync-status').textContent = `County check is still running. Resume run ${id} to read its status; no new check will be submitted.`;
+      return;
+    }
+    const outcome = syncRun.status === 'succeeded'
+      ? 'County check completed. Review the updated evidence and coverage below.'
+      : syncRun.status === 'partial'
+        ? 'County check partially completed. Review each source’s coverage; unavailable sources are not empty results.'
+        : `County check ${label(syncRun.status).toLowerCase()}. Unavailable sources are not empty results; existing evidence is preserved.`;
+    element('sync-status').textContent = `County result received. Refreshing the ledger view… Run ${id}.`;
+    const verified = await refresh();
+    element('sync-status').textContent = `${outcome} Run ${id}.${verified ? '' : ' The ledger view has not refreshed; the previous snapshot may still be shown.'}`;
   } catch (error) {
-    element('sync-status').textContent = error.message;
-  } finally { button.disabled = !current?.property.property || !canWrite; }
+    if (!pageActive) return;
+    if (error.name === 'AbortError' && timedOut) {
+      element('sync-status').textContent = syncRun?.status === 'running'
+        ? `County check is still running. Resume run ${syncRun.id} to read its status; no new check will be submitted.`
+        : 'No county-check receipt was received in time. A check may have started; refresh before requesting another.';
+      return;
+    }
+    if (error.name === 'AbortError') return;
+    element('sync-status').textContent = syncRun?.status === 'running'
+      ? `${errorSentence(error, 'The county-check status could not be read.')} Resume run ${syncRun.id} to read its status. No new check has been submitted.`
+      : `${errorSentence(error, 'The county-check receipt could not be read.')} A check may have started; refresh before requesting another.`;
+  } finally {
+    clearTimeout(deadlineTimer);
+    if (syncController === controller) syncController = null;
+    syncPolling = false;
+    updateSyncButton();
+  }
 });
+
+window.addEventListener('pagehide', () => {
+  pageActive = false;
+  lookupController?.abort();
+  syncController?.abort();
+});
+window.addEventListener('pageshow', () => { pageActive = true; updateSyncButton(); });
 
 element('login').addEventListener('submit', event => {
   event.preventDefault();

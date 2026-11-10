@@ -49,6 +49,19 @@ dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 .record, .panel, .evidence-list, #property-label { overflow-wrap: anywhere; }
 .evidence-identity { font-weight: 600; }
 .connection { max-width: 440px; margin: 20px auto 40px; }
+.parcel-candidates { border: 0; padding: 0; margin: 20px 0 0; min-width: 0; }
+.parcel-candidates legend { margin-bottom: 12px; font-weight: 600; }
+.parcel-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 12px; margin: 0; }
+.parcel-option label { cursor: pointer; }
+.parcel-option input { width: auto; margin-top: 4px; }
+.parcel-option strong { display: block; margin-bottom: 8px; }
+.parcel-option .evidence-list { margin-bottom: 0; }
+#lookup-coverage { margin-top: 20px; }
+#parcel-lookup-form, #property-confirmation:not([hidden]) { display: grid; gap: 14px; }
+#parcel-lookup-form label, #property-confirmation label { margin: 0; }
+#parcel-lookup-form button, #property-confirmation button { justify-self: start; }
+#property-preview > button { margin-top: 16px; }
+#property-preview-content > p { overflow-wrap: anywhere; }
 .connection label { margin: 20px 0 12px; }
 #notice { margin: 0 0 24px; }
 dialog > p { margin-top: 0; }

@@ -56,6 +56,31 @@
         <section id="property-view" hidden aria-labelledby="property-title">
           <h2 id="property-title" class="sr-only">Property and sources</h2>
           <div id="binding" class="panel"></div>
+          <section id="property-setup" class="panel section" hidden aria-labelledby="setup-title">
+            <h2 id="setup-title">Find the county parcel</h2>
+            <p>Search the county’s published assessment records, then choose and confirm the exact parcel. An address match does not confirm a property automatically.</p>
+            <form id="parcel-lookup-form">
+              <label for="setup-county">County</label><select id="setup-county" disabled><option value="06037">Los Angeles County, California · FIPS 06037</option></select>
+              <label>Street address<input id="setup-address" type="text" required minlength="5" maxlength="120" autocomplete="street-address" placeholder="Street address, including unit if applicable"></label>
+              <button id="lookup-parcels" type="submit">Search county records</button>
+            </form>
+            <p id="setup-notice" hidden></p>
+            <div id="lookup-result" hidden>
+              <p id="lookup-coverage" class="notice"></p>
+              <fieldset id="parcel-candidates" class="parcel-candidates"><legend>Select the exact parcel</legend><div id="parcel-options" class="stack"></div></fieldset>
+              <div id="property-confirmation" class="section" hidden>
+                <label>Property label<input id="setup-label" type="text" required maxlength="200" value="Property" autocomplete="off"></label>
+                <label class="check"><input id="confirm-parcel" type="checkbox">The county and selected parcel match this property on the official county record.</label>
+                <button id="review-property" type="button" disabled>Review property confirmation</button>
+              </div>
+            </div>
+            <section id="property-preview" class="section" hidden aria-labelledby="property-preview-title">
+              <h3 id="property-preview-title">Review property confirmation</h3>
+              <div id="property-preview-content"></div>
+              <button id="apply-property" type="button">Confirm this property</button>
+            </section>
+            <details class="section"><summary>Already have authoritative parcel evidence?</summary><p>Structured evidence can still be imported. The first import also requires explicit county and parcel confirmation.</p><button id="setup-import" type="button" class="quiet">Import existing evidence</button></details>
+          </section>
           <section class="section" aria-labelledby="sources-title">
             <div class="section-heading"><h2 id="sources-title">County coverage</h2><button id="sync" type="button" class="quiet">Check county source</button></div>
             <p id="sync-status" role="status" aria-live="polite" class="muted"></p>
@@ -64,7 +89,7 @@
           <aside class="panel section">
             <h2>Evidence, not assumptions</h2>
             <p>Unknown balances stay unknown. A missing notice stays unresolved. Annual and supplemental bills are tracked separately, including adjusted versions.</p>
-            <p class="muted">Property does not submit county request forms, make payments, or change existing calendar reminders.</p>
+            <p class="muted">County collection uses read-only lookups. Property does not submit support or duplicate-notice requests, make payments, or change existing calendar reminders.</p>
           </aside>
         </section>
       </div>

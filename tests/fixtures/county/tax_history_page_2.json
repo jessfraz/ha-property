@@ -1,0 +1,8 @@
+{
+  "success": true,
+  "data": {
+    "status": 200,
+    "data": [{"payment_id": 1002, "ain": "0000000001", "effective_date": "11/05/2030", "installment_key": "1", "group_number": "99", "tax_paid": "300.00", "penalty_paid": "0.00", "cost_paid": "0.00", "total_paid": "300.00", "tax_year": 2030, "sequence": "001", "group_description": "Fictional online posting"}],
+    "meta": {"lastUpdated": "2030-11-06", "totalPages": 2, "totalRecords": 2}
+  }
+}

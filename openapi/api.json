@@ -13,6 +13,53 @@
       }
     },
     "schemas": {
+      "AddressCandidate": {
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/Evidence"
+          },
+          "key": {
+            "$ref": "#/components/schemas/BindingKey"
+          },
+          "roll_year": {
+            "format": "uint16",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "address",
+          "evidence",
+          "key",
+          "roll_year"
+        ],
+        "type": "object"
+      },
+      "AddressCandidates": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/AddressCandidate"
+            },
+            "type": "array"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/Coverage"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "candidates",
+          "coverage",
+          "truncated"
+        ],
+        "type": "object"
+      },
       "Allocation": {
         "additionalProperties": false,
         "properties": {
@@ -1131,6 +1178,18 @@
         ],
         "type": "object"
       },
+      "ResolveAddress": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "type": "object"
+      },
       "SourceKind": {
         "enum": [
           "county",
@@ -1537,6 +1596,59 @@
         ]
       }
     },
+    "/v1/property/resolve": {
+      "post": {
+        "operationId": "resolve_property",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveAddress"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddressCandidates"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "Resolve a bounded LA County address candidate set without selecting or saving a parcel.",
+        "tags": [
+          "property"
+        ]
+      }
+    },
     "/v1/summary": {
       "get": {
         "operationId": "summary",
@@ -1584,7 +1696,7 @@
       "post": {
         "operationId": "sync_request",
         "responses": {
-          "201": {
+          "202": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1592,7 +1704,7 @@
                 }
               }
             },
-            "description": "successful creation",
+            "description": "successfully enqueued operation",
             "headers": {
               "cache-control": {
                 "required": true,
