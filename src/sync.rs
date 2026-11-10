@@ -227,6 +227,7 @@ impl SyncStore {
                         .map_err(|_| TaxError::Invalid("county collection did not return valid evidence"))?;
                     page.validate_binding(&property.key).map_err(|_| TaxError::BindingMismatch)?;
                     let mut page = page;
+                    page.observations.retain(|value|property.includes_observation(value));
                     if page.coverage.is_empty() {
                         return Err(TaxError::Invalid("county collection omitted source coverage"));
                     }
@@ -379,6 +380,11 @@ async fn apply_collected(
 ) -> Result<(), TaxError> {
     for attempt in 0..2 {
         let snapshot = store.snapshot().await?;
+        if snapshot.property.as_ref().is_some_and(|current| {
+            current.key != property.key || current.bought_on != property.bought_on
+        }) {
+            return Err(TaxError::RevisionConflict);
+        }
         let existing: BTreeMap<_, _> = snapshot
             .observations
             .iter()
@@ -409,6 +415,9 @@ async fn apply_collected(
             }
             result => result?,
         };
+        if preview.revision != snapshot.revision {
+            continue;
+        }
         let request = ApplyRequest {
             if_match: preview.revision,
             preview,
@@ -564,6 +573,69 @@ mod tests {
         page: crate::county::CountySyncPage,
         started: Option<std::sync::Arc<tokio::sync::Notify>>,
         release: Option<std::sync::Arc<tokio::sync::Notify>>,
+    }
+
+    #[tokio::test]
+    async fn changing_history_fences_an_inflight_collection_and_filters_the_next_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ledger, syncs, property, mut page) = fixture(dir.path()).await;
+        if let crate::tax::ledger::ObservationData::Assessment(value) =
+            &mut page.observations[0].observation
+        {
+            value.fiscal_year = 2019;
+        }
+        let started = std::sync::Arc::new(tokio::sync::Notify::new());
+        let release = std::sync::Arc::new(tokio::sync::Notify::new());
+        let run = syncs
+            .request_from(
+                &ledger,
+                property.clone(),
+                FixtureCounty {
+                    page: page.clone(),
+                    started: Some(started.clone()),
+                    release: Some(release.clone()),
+                },
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .unwrap();
+        let state = ledger
+            .update_bought_on(
+                Some(chrono::NaiveDate::from_ymd_opt(2020, 6, 1).unwrap()),
+                1,
+                chrono::Utc::now(),
+            )
+            .await
+            .unwrap();
+        release.notify_one();
+        let stale = terminal(&syncs, run.id).await;
+        assert_eq!(stale.error_code.as_deref(), Some("revision_conflict"));
+        assert!(ledger.snapshot().await.unwrap().observations.is_empty());
+        let current = state.property.unwrap();
+        let run = syncs
+            .request_from(
+                &ledger,
+                current,
+                FixtureCounty {
+                    page,
+                    started: None,
+                    release: None,
+                },
+            )
+            .await
+            .unwrap();
+        let refreshed = terminal(&syncs, run.id).await;
+        assert!(refreshed.page.unwrap().observations.is_empty());
+        let saved = ledger.snapshot().await.unwrap();
+        assert!(saved.observations.is_empty());
+        let saved = saved.property.unwrap();
+        assert_eq!(saved.key, property.key);
+        assert_eq!(saved.confirmation, property.confirmation);
+        assert!(saved.bought_on.is_some());
+        syncs.close().await.unwrap();
+        ledger.close().await.unwrap();
     }
     impl crate::county::County for FixtureCounty {
         fn jurisdiction(&self) -> crate::tax::ledger::CountyFips {

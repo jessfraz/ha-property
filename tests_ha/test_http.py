@@ -25,7 +25,12 @@ async def test_tax_rest_bridge_requires_an_active_admin(
     assert (await anonymous.get(f"{PREFIX}/summary")).status == 401
     user = await hass_client(hass_user_token)
     before = len(backend.requests)
-    for method, path in (("get", "summary"), ("post", "sync"), ("post", "imports")):
+    for method, path in (
+        ("get", "summary"),
+        ("post", "sync"),
+        ("post", "imports"),
+        ("patch", "property"),
+    ):
         response = await getattr(user, method)(
             f"{PREFIX}/{path}", headers={"X-Property-Admin": "true"}
         )
@@ -65,6 +70,33 @@ async def test_admin_claim_and_preconditions_come_from_the_bridge(
     assert forwarded["If-Match"] == '"4"'
     assert forwarded["Idempotency-Key"] == "fictional-request"
     assert json.loads(backend.requests[index][2])["if_match"] == 4
+
+
+async def test_history_setting_uses_native_admin_claim_etag_and_refresh(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    entry: PropertyConfigEntry,
+    backend: Backend,
+) -> None:
+    admin = await hass_client()
+    backend.document["revision"] = 2
+    response = await admin.patch(
+        f"{PREFIX}/property",
+        json={"bought_on": "2020-06-01"},
+        headers={"If-Match": '"1"', "X-Property-Admin": "false"},
+    )
+    assert response.status == 200
+    index = next(
+        index
+        for index, (method, path, _) in enumerate(backend.requests)
+        if method == "PATCH" and path == "/v1/property"
+    )
+    assert backend.headers[index]["If-Match"] == '"1"'
+    assert backend.headers[index]["X-Property-Admin"] == "true"
+    assert json.loads(backend.requests[index][2]) == {"bought_on": "2020-06-01"}
+    await hass.async_block_till_done()
+    assert entry.runtime_data.data.revision == 2
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 async def test_invalid_queries_and_oversized_inputs_do_not_reach_backend(

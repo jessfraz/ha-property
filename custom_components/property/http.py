@@ -15,10 +15,11 @@ from .coordinator import PropertyCoordinator
 _ROUTES = (
     (
         re.compile(
-            r"system|health|property|summary|tax/bills|tax/installments|tax/assessments|tax/payments"
+            r"system|health|summary|tax/bills|tax/installments|tax/assessments|tax/payments"
         ),
         frozenset({"GET"}),
     ),
+    (re.compile(r"property"), frozenset({"GET", "PATCH"})),
     (
         re.compile(r"tax/bills/[A-Za-z0-9_-]{1,128}|sync/[A-Za-z0-9_-]{1,128}"),
         frozenset({"GET"}),
@@ -106,7 +107,7 @@ class PropertyView(HomeAssistantView):
             raise web.HTTPServiceUnavailable
         if not user.is_active or not user.is_admin:
             raise web.HTTPForbidden
-        if request.method == "POST" and response.status < 300:
+        if request.method in {"POST", "PATCH"} and response.status < 300:
             entry = coordinator.config_entry
             if entry is not None:
                 entry.async_create_background_task(

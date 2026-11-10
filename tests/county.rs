@@ -13,6 +13,7 @@ use property::{
 fn property() -> PropertyBinding {
     let now = Utc::now();
     PropertyBinding {
+        bought_on: None,
         key: BindingKey {
             jurisdiction: CountyFips::los_angeles(),
             parcel: ParcelId::try_from("FICTIONAL-PARCEL-A".to_owned()).unwrap(),

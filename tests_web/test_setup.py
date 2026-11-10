@@ -47,7 +47,10 @@ def parcel_matches(count: int = 2, *, truncated: bool = False) -> dict[str, obje
 
 async def lookup(page: Page) -> None:
     await page.get_by_role("button", name="Find county parcel", exact=True).click()
-    await page.get_by_label("Street address", exact=True).fill("100 Example Street")
+    await page.get_by_role("radio", name="Street address", exact=True).check()
+    await page.get_by_role("textbox", name="Street address", exact=True).fill(
+        "100 Example Street"
+    )
     await page.get_by_role("button", name="Search county records", exact=True).click()
 
 
@@ -70,6 +73,57 @@ async def reviewed_binding(page: Page) -> None:
     await expect(page.locator("#property-preview")).to_be_visible()
 
 
+async def test_parcel_number_is_the_default_and_keeps_explicit_confirmation(
+    property_backend: PropertyBackend, page: Page
+) -> None:
+    calls: list[object] = []
+    response = parcel_matches(1)
+    candidates = response["candidates"]
+    assert isinstance(candidates, list)
+    candidates[0]["key"]["parcel"] = "0000000001"
+
+    async def source(route: Route) -> None:
+        calls.append(route.request.post_data_json)
+        await route.fulfill(json=response)
+
+    await page.route("**/v1/property/resolve", source)
+    await login(page, property_backend)
+    await page.get_by_role("button", name="Find county parcel", exact=True).click()
+    await expect(
+        page.get_by_role("radio", name="Parcel number (APN)", exact=True)
+    ).to_be_checked()
+    await expect(
+        page.get_by_role("textbox", name="Street address", exact=True)
+    ).not_to_be_visible()
+    await page.get_by_role("textbox", name="Parcel number (APN)", exact=True).fill(
+        "0000-000-001"
+    )
+    await page.get_by_role("button", name="Search county records", exact=True).click()
+    await expect(
+        page.get_by_role("radio", name=re.compile("0000000001"))
+    ).to_be_visible()
+    await expect(page.locator("#parcel-options input:checked")).to_have_count(0)
+    _, state = await property_backend.request("GET", "/v1/property")
+    assert state["property"] is None and state["revision"] == 0
+    assert calls == [{"parcel": "0000-000-001"}]
+    await page.get_by_role("radio", name=re.compile("0000000001")).check()
+    await page.get_by_label("Bought on (optional)", exact=True).fill("2024-06-30")
+    await page.get_by_label(
+        "The county and selected parcel match this property"
+    ).check()
+    await page.get_by_role(
+        "button", name="Review property confirmation", exact=True
+    ).click()
+    await expect(page.locator("#property-preview")).to_contain_text("Jun 30, 2024")
+    await page.get_by_role("button", name="Confirm this property", exact=True).click()
+    await expect(page.locator("#notice")).to_contain_text("Property confirmed")
+    _, confirmed = await property_backend.request("GET", "/v1/property")
+    binding = confirmed["property"]
+    assert isinstance(binding, dict)
+    assert binding["bought_on"] == "2024-06-30"
+    assert confirmed["revision"] == 1
+
+
 @pytest.mark.parametrize("count", [1, 2])
 async def test_county_candidates_require_explicit_selection_review_and_real_apply(
     property_backend: PropertyBackend, page: Page, count: int
@@ -89,7 +143,9 @@ async def test_county_candidates_require_explicit_selection_review_and_real_appl
     await expect(page.get_by_label("County", exact=True)).to_have_value("06037")
     await expect(page.get_by_label("County", exact=True)).to_be_disabled()
     await expect(page.locator("#parcel-options input:checked")).to_have_count(0)
-    await expect(page.get_by_role("radio")).to_have_count(count)
+    await expect(page.locator("#parcel-options").get_by_role("radio")).to_have_count(
+        count
+    )
     await expect(page.locator("#lookup-coverage")).to_contain_text("may be stale")
     await expect(page.locator("#parcel-options")).to_contain_text("2021")
     await expect(page.locator("#parcel-options")).to_contain_text("06037")
@@ -152,17 +208,19 @@ async def test_truncated_or_empty_matches_never_confirm_a_property(
     await expect(page.locator("#setup-notice")).to_contain_text(
         "Narrow the street address"
     )
-    for radio in await page.get_by_role("radio").all():
+    for radio in await page.locator("#parcel-options").get_by_role("radio").all():
         await expect(radio).to_be_disabled()
     await expect(page.locator("#property-confirmation")).not_to_be_visible()
     response = parcel_matches(0)
-    await page.get_by_label("Street address", exact=True).fill("200 Example Street")
+    await page.get_by_role("textbox", name="Street address", exact=True).fill(
+        "200 Example Street"
+    )
     await page.get_by_role("button", name="Search county records", exact=True).click()
     await expect(page.locator("#setup-notice")).to_contain_text(
         "property remains unconfirmed"
     )
     await expect(page.locator("#setup-notice")).to_contain_text("does not mean")
-    await expect(page.get_by_role("radio")).to_have_count(0)
+    await expect(page.locator("#parcel-options").get_by_role("radio")).to_have_count(0)
     _, state = await property_backend.request("GET", "/v1/property")
     assert state["revision"] == 0 and state["property"] is None
 
@@ -180,10 +238,10 @@ async def test_lookup_error_preserves_address_without_ledger_writes(
     await expect(page.locator("#setup-notice")).not_to_contain_text(
         "untrusted upstream"
     )
-    await expect(page.get_by_label("Street address", exact=True)).to_have_value(
-        "100 Example Street"
-    )
-    await expect(page.get_by_role("radio")).to_have_count(0)
+    await expect(
+        page.get_by_role("textbox", name="Street address", exact=True)
+    ).to_have_value("100 Example Street")
+    await expect(page.locator("#parcel-options").get_by_role("radio")).to_have_count(0)
     _, state = await property_backend.request("GET", "/v1/property")
     assert state["revision"] == 0 and state["property"] is None
 
@@ -205,7 +263,7 @@ async def test_a_foreign_county_response_is_not_a_confirmable_candidate(
     await login(page, property_backend)
     await lookup(page)
     await expect(page.locator("#setup-notice")).to_contain_text("county-bound parcel")
-    await expect(page.get_by_role("radio")).to_have_count(0)
+    await expect(page.locator("#parcel-options").get_by_role("radio")).to_have_count(0)
     _, state = await property_backend.request("GET", "/v1/property")
     assert state["revision"] == 0 and state["property"] is None
 

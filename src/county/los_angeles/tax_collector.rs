@@ -702,7 +702,10 @@ async fn read_history(
     let observations = records
         .values()
         .map(|record| observation(record, updated, request))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|value| request.property.includes_observation(value))
+        .collect();
     let stale = request
         .requested_at
         .with_timezone(&Los_Angeles)
@@ -955,6 +958,7 @@ mod tests {
         };
         CountySyncRequest {
             property: PropertyBinding {
+                bought_on: None,
                 key,
                 label: "Fictional property".into(),
                 confirmed_at: at,

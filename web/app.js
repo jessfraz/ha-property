@@ -78,14 +78,15 @@ async function api(path, options = {}) {
       binding_mismatch: 'This evidence belongs to another county or parcel. Check the confirmed property.',
       property_changed: 'An import cannot replace the confirmed property.',
       observation_conflict: 'An observation ID already has different evidence. Preserve the original and use a new observation ID.',
-      revision_conflict: 'The ledger changed. Refresh and create a new preview.',
+      revision_conflict: path === 'property' ? 'The ledger changed. Refresh before saving the date again.' : 'The ledger changed. Refresh and create a new preview.',
       preview_mismatch: 'The import no longer matches its preview. Create a new preview.',
       idempotency_conflict: 'This import key belongs to another request. Create a new preview.',
       capacity: 'The ledger or import limit was reached. Split the import into smaller evidence files.',
       invalid_input: path === 'property/resolve'
-        ? 'Check the street address, including any unit. Query wildcards are not supported.'
-        : 'The evidence is invalid. Check its typed fields, property identity, amounts, and deadlines.',
-      if_match_required: 'The preview revision is required. Create a new preview.',
+        ? 'Enter a ten-digit parcel number or a full street address. Query wildcards are not supported.'
+        : path === 'property' ? 'Enter a valid purchase date that is not in the future, or leave it blank.'
+          : 'The evidence is invalid. Check its typed fields, property identity, amounts, and deadlines.',
+      if_match_required: path === 'property' ? 'Refresh the property before saving its history date.' : 'The preview revision is required. Create a new preview.',
       database_unavailable: 'The ledger is unavailable. Existing evidence has not been replaced.',
       county_unavailable: 'The county lookup is unavailable. No property was confirmed.',
     };
@@ -191,7 +192,7 @@ function label(value) {
 
 /** @param {{fiscal_year:number,sequence:string,source_version:string}} identity */
 function identityLabel(identity) {
-  return `FY ${identity.fiscal_year} · ${identity.sequence} · version ${identity.source_version}`;
+  return `FY ${identity.fiscal_year} · ${identity.sequence}${identity.source_version === 'unversioned' ? '' : ` · version ${identity.source_version}`}`;
 }
 
 /** @param {object} first @param {object} second */
@@ -231,7 +232,7 @@ function tag(text, kind = '') {
 function render() {
   const { summary, property } = current;
   element('property-label').textContent = property.property?.label ?? 'Tax ledger';
-  element('snapshot-status').textContent = `Revision ${summary.revision} · ${summary.last_observed_at ? `last evidence ${date(summary.last_observed_at)}` : 'no evidence yet'}`;
+  element('snapshot-status').textContent = summary.last_observed_at ? `Last evidence ${date(summary.last_observed_at)}` : 'No evidence yet';
   const unpaid = [...summary.installments].filter(item => item.state !== 'paid')
     .sort((a, b) => a.due_date.localeCompare(b.due_date));
   const next = unpaid[0];
@@ -241,13 +242,14 @@ function render() {
       ? `Observed ${date(summary.latest_balance.evidence.observed_at)}` : 'No property-wide county balance'),
     metric('Next unpaid installment', next ? date(next.due_date) : 'Unknown', next
       ? `${nextCount > 1 ? `${nextCount} installments due` : `${identityLabel(next.identity)} · installment ${next.number}`} · ${next.timezone}` : 'No confirmed open deadline'),
-    metric('Needs attention', String(summary.needs_attention), 'Open installments and unresolved evidence flags'),
+    metric('Needs attention', String(summary.needs_attention), `${unpaid.length} open installments · ${summary.needs_attention - unpaid.length} evidence flags`),
   );
   renderAttention();
   renderBills();
   renderAssessments();
   renderPayments();
   renderProperty();
+  element('summary').hidden = !property.property || element('attention-view').hidden;
 }
 
 function renderAttention() {
@@ -255,22 +257,115 @@ function renderAttention() {
   const { summary, property } = current;
   host.replaceChildren();
   if (!property.property) {
-    const box = empty(host, 'Confirm a property to begin', 'Find the county’s parcel record, then explicitly confirm the exact county and parcel. A ZIP code or the first address match is not a property match.');
+    const box = empty(host, 'Add a property', 'Find your county parcel and confirm the match to start the ledger.');
     const button = node('button', 'Find county parcel');
     button.type = 'button';
     button.addEventListener('click', openSetup);
     if (canWrite) box.append(button);
   } else if (summary.needs_attention === 0) {
-    empty(host, 'No unresolved items in this snapshot', 'This describes the imported evidence, not a guarantee that every county notice has been received. Check source coverage below.');
+    empty(host, 'Nothing needs attention', summary.last_observed_at ? `Evidence through ${date(summary.last_observed_at)}.` : 'No evidence has been imported yet.');
   }
   for (const installment of summary.installments.filter(item => item.state !== 'paid')) host.append(installmentCard(installment));
-  // The server counts open installments plus non-balance evidence flags.
-  // Missing balance detail belongs to the affected installment, not a second
-  // unscoped item which would misrepresent that attention count.
-  for (const issue of summary.issues.filter(item => item.code !== 'unknown_balance')) host.append(issueCard(issue, true));
+  if (property.property) renderAttentionGroups(host);
   const installments = element('installments');
   installments.replaceChildren(...summary.installments.map(installmentCard));
   element('deadline-section').hidden = !summary.installments.length;
+}
+
+/** @param {HTMLElement} host */
+function renderAttentionGroups(host) {
+  const groups = new Map();
+  const unknownBalance = current.summary.issues.some(issue => issue.code === 'unknown_property_balance');
+  for (const issue of current.summary.issues) {
+    if (issue.code === 'unknown_balance') continue;
+    let cause = issue.code;
+    if (['missing_notice', 'assessment_without_notice'].includes(cause)
+        || cause === 'coverage_gap' && issue.scope?.capability === 'notices') cause = 'notices';
+    else if (cause === 'unknown_property_balance'
+        || cause === 'coverage_gap' && issue.scope?.capability === 'balances' && unknownBalance) cause = 'balance';
+    else if (['coverage_gap', 'coverage_incomplete', 'coverage_unknown'].includes(cause)) cause = 'coverage';
+    const issues = groups.get(cause) ?? [];
+    issues.push(issue);
+    groups.set(cause, issues);
+  }
+  // Keep contradictory or overdue evidence prominent; collection limits follow
+  // the concrete records and user actions they affect.
+  const rank = cause => ['balance_conflict', 'balance_outdated', 'balance', 'notices', 'coverage'].indexOf(cause);
+  const ordered = [...groups.entries()].sort(([a], [b]) => {
+    const first = rank(a), second = rank(b);
+    return (first < 0 ? 0 : first + 1) - (second < 0 ? 0 : second + 1);
+  });
+  for (const [cause, issues] of ordered) {
+    const card = node('article', '', 'record issue issue-group');
+    const heading = node('div', '', 'record-heading');
+    const billIssues = issues.filter(issue => issue.scope?.kind === 'bill');
+    let title;
+    let description;
+    if (cause === 'notices') {
+      title = billIssues.length ? `${billIssues.length} ${billIssues.length === 1 ? 'bill needs a notice' : 'bills need notices'}` : 'Assessment notices needed';
+      description = 'County records reference these tax years, but the notices are not on file.';
+    } else if (cause === 'balance') {
+      title = 'County balance not confirmed';
+      description = 'The current property-wide balance is unknown. Check the county viewer or import a recent balance.';
+    } else if (cause === 'coverage') {
+      title = 'County coverage is limited';
+      description = 'Some sources have a limited history or could not be checked.';
+    } else {
+      title = label(cause);
+      description = issues[0].message;
+    }
+    heading.append(node('h3', title));
+    card.append(heading, node('p', description));
+    const rows = node('ul', '', 'issue-records');
+    for (const issue of [...billIssues].sort((a, b) => b.scope.bill.fiscal_year - a.scope.bill.fiscal_year || a.scope.bill.sequence.localeCompare(b.scope.bill.sequence))) {
+      const bill = current.summary.bills.find(item => sameBill(item.identity, issue.scope.bill));
+      const row = node('li');
+      row.append(node('span', identityLabel(issue.scope.bill)));
+      if (bill) row.append(viewButton('View', () => openBill(bill), `View affected bill ${identityLabel(bill.identity)}`));
+      rows.append(row);
+    }
+    if (rows.children.length) card.append(rows);
+    const assessmentIssues = issues.filter(issue => issue.code === 'assessment_without_notice');
+    if (assessmentIssues.length) {
+      const years = [...new Set(current.assessments.map(item => item.observation.data.fiscal_year))]
+        .filter(year => !billIssues.some(issue => issue.scope.bill.fiscal_year === year)
+          && !current.summary.bills.some(bill => bill.identity.fiscal_year === year && !bill.superseded && !bill.missing_notice))
+        .sort((a, b) => b - a);
+      if (years.length) card.append(node('p', `Assessments without a notice: ${years.map(year => `FY ${year}`).join(', ')}.`, 'record-meta'));
+    }
+    const sources = issues.filter(issue => issue.scope?.kind === 'capability');
+    if (sources.length) {
+      card.append(node('p', sources.map(issue => {
+        const coverage = current.summary.coverage.find(item => item.capability === issue.scope.capability);
+        return `${label(issue.scope.capability)}: ${coverage ? label(coverage.status) : 'Unknown'}`;
+      }).join(' · '), 'record-meta'));
+    }
+    const actions = node('div', '', 'actions');
+    if (canWrite && ['notices', 'balance'].includes(cause)) actions.append(viewButton(cause === 'notices' ? 'Import notices' : 'Import balance', openImport));
+    if (cause === 'notices' && assessmentIssues.length) actions.append(viewButton('View assessments', () => selectView('assessments')));
+    if (!['notices', 'balance', 'coverage'].includes(cause)) {
+      const detail = node('details');
+      detail.append(node('summary', 'Affected evidence'));
+      for (const issue of issues) detail.append(issueCard(issue, true));
+      card.append(detail);
+    }
+    if (actions.children.length) card.append(actions);
+    host.append(card);
+  }
+  if (current.summary.coverage.length) host.append(viewButton('View county coverage', () => {
+    selectView('property');
+    element('sources-title').setAttribute('tabindex', '-1');
+    element('sources-title').focus();
+  }));
+}
+
+/** @param {string} title @param {() => void} action @param {string} [accessibleLabel] */
+function viewButton(title, action, accessibleLabel) {
+  const button = node('button', title, 'quiet');
+  button.type = 'button';
+  if (accessibleLabel) button.setAttribute('aria-label', accessibleLabel);
+  button.addEventListener('click', action);
+  return button;
 }
 
 /** @param {{code:string,message:string,observation_ids:string[],scope?:object}} issue @param {boolean} [actions] */
@@ -321,27 +416,35 @@ function installmentCard(installment) {
     ['Due', date(installment.due_date)],
     ['Delinquent after', `${date(installment.delinquent_at, true, installment.timezone)} · ${installment.timezone}`],
   ]);
-  for (const issue of installment.issues) card.append(node('p', issue.message, 'muted'));
+  for (const issue of installment.issues.filter(item => item.code !== 'unknown_balance')) card.append(node('p', issue.message, 'muted'));
   return card;
 }
 
 function renderBills() {
   const host = element('bills');
-  const bills = current.summary.bills;
+  const bills = [...current.summary.bills].sort((a, b) => b.identity.fiscal_year - a.identity.fiscal_year || a.identity.sequence.localeCompare(b.identity.sequence));
   host.replaceChildren();
-  if (!bills.length) empty(host, 'No bills imported', 'Import annual or supplemental notices to see their installments and evidence. No bill does not mean no tax is due.');
+  if (!bills.length) empty(host, 'No bills on file', 'Import a notice to see its balance and installments.');
+  let year = null;
+  let group;
   for (const bill of bills) {
-    const card = node('article', '', `record${bill.missing_notice ? ' unknown' : ''}`);
+    if (year !== bill.identity.fiscal_year) {
+      year = bill.identity.fiscal_year;
+      group = node('section', '', 'bill-year stack');
+      group.append(node('h2', `FY ${year}`));
+      host.append(group);
+    }
+    const card = node('article', '', `record bill-row${bill.missing_notice ? ' unknown' : ''}`);
     const heading = node('div', '', 'record-heading');
     const title = node('div');
     title.append(node('h3', bill.bill_kind ? `${label(bill.bill_kind)} bill` : 'Bill awaiting notice'), node('p', identityLabel(bill.identity), 'muted'));
     heading.append(title, tag(bill.superseded ? 'Superseded' : bill.missing_notice ? 'Missing notice' : 'Notice received', bill.missing_notice ? 'warning' : ''));
     card.append(heading);
     const balance = bill.latest_balance;
-    facts(card, [
-      ['Latest bill balance', balance ? money(balance.observation.data.amount_cents) : 'Unknown'],
-      ['Evidence observed', balance ? date(balance.evidence.observed_at) : 'No bill-scoped balance'],
-    ]);
+    const balanceLine = node('p', '', 'bill-balance');
+    balanceLine.append(node('span', 'Bill balance', 'muted'), node('strong', balance ? money(balance.observation.data.amount_cents) : 'Unknown'));
+    if (balance) balanceLine.append(node('span', `Observed ${date(balance.evidence.observed_at)}`, 'muted'));
+    card.append(balanceLine);
     const actions = node('div', '', 'actions');
     const detail = node('button', 'View bill', 'quiet');
     detail.type = 'button';
@@ -349,7 +452,7 @@ function renderBills() {
     detail.addEventListener('click', () => openBill(bill));
     actions.append(detail);
     card.append(actions);
-    host.append(card);
+    group.append(card);
   }
 }
 
@@ -410,15 +513,18 @@ function renderAssessments() {
   const host = element('assessments');
   host.replaceChildren();
   if (!current.assessments.length) empty(host, 'No assessment evidence', 'Assessed value is not a tax balance. Import assessment evidence separately from tax notices.');
-  for (const observation of current.assessments) {
+  for (const observation of [...current.assessments].sort((a, b) => b.observation.data.fiscal_year - a.observation.data.fiscal_year)) {
     const assessment = observation.observation.data;
     const card = node('article', '', 'record');
     const heading = node('div', '', 'record-heading');
     heading.append(node('h3', `FY ${assessment.fiscal_year} assessment`), node('p', money(assessment.assessed_value_cents), 'amount'));
-    card.append(heading, node('p', assessment.description));
+    card.append(heading);
+    const details = node('details');
+    details.append(node('summary', 'Assessment details and source'), node('p', assessment.description));
     const evidence = node('ul', '', 'evidence-list');
     evidence.append(evidenceItem(observation.evidence));
-    card.append(evidence);
+    details.append(evidence);
+    card.append(details);
     host.append(card);
   }
 }
@@ -450,24 +556,72 @@ function renderProperty() {
   host.replaceChildren(node('h2', property ? property.label : 'No property confirmed'));
   if (property) {
     facts(host, [['County FIPS', property.key.jurisdiction], ['Parcel', property.key.parcel], ['Confirmed', date(property.confirmed_at, true)]]);
+    if (canWrite) host.append(propertyDateForm(property));
+    else facts(host, [['Bought on', property.bought_on ? date(property.bought_on) : 'Not set']]);
     const evidence = node('ul', '', 'evidence-list');
     evidence.append(evidenceItem(property.confirmation));
-    host.append(evidence);
+    const source = node('details');
+    source.append(node('summary', 'Parcel confirmation source'), evidence);
+    host.append(source);
   } else {
     host.append(node('p', 'Confirm the county and exact parcel against official county evidence once. Imports cannot silently change this binding.'));
   }
   element('property-setup').hidden = Boolean(property) || !canWrite;
   const coverage = element('coverage');
   coverage.replaceChildren();
-  if (!current.summary.coverage.length) empty(coverage, 'County coverage is unknown', 'No source coverage has been checked. An empty result is not evidence of a zero balance.');
+  if (!current.summary.coverage.length) empty(coverage, 'County sources not checked', 'Check the county source to collect available records.');
   for (const item of current.summary.coverage) {
     const card = node('article', '', 'record');
     const heading = node('div', '', 'record-heading');
-    heading.append(node('h3', label(item.capability)), tag(label(item.status), item.status === 'complete' ? 'ok' : 'warning'));
-    card.append(heading, node('p', item.detail), node('p', `Checked ${date(item.checked_at, true)}`, 'record-meta'));
+    heading.append(node('h3', label(item.capability)), tag(label(item.status), item.status === 'complete' ? 'ok' : item.status === 'partial' ? '' : 'warning'));
+    const details = node('details');
+    details.append(node('summary', 'Source details'), node('p', item.detail));
+    card.append(heading, node('p', `Checked ${date(item.checked_at, true)}`, 'record-meta'), details);
     coverage.append(card);
   }
   updateSyncButton();
+}
+
+/** @param {object} property */
+function propertyDateForm(property) {
+  const form = node('form', '', 'property-date');
+  const caption = node('label', 'Bought on (optional)');
+  const input = document.createElement('input');
+  input.type = 'date';
+  input.id = 'property-bought-on';
+  input.setAttribute('aria-describedby', 'property-history-help');
+  input.value = property.bought_on ?? '';
+  input.max = countyToday();
+  caption.append(input);
+  const help = node('p', 'Only include records from this date onward. Leave blank for all available history.', 'field-help');
+  help.id = 'property-history-help';
+  const save = node('button', 'Save date', 'quiet');
+  save.type = 'submit';
+  const notice = node('p');
+  notice.hidden = true;
+  form.append(caption, help, save, notice);
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const revision = current.property.revision;
+    input.disabled = true;
+    save.disabled = true;
+    setNotice(notice, 'Saving…');
+    try {
+      await api('property', { method: 'PATCH', headers: { 'If-Match': `"${revision}"` }, body: JSON.stringify({ bought_on: input.value || null }) });
+      if (await refresh()) setNotice(element('notice'), 'History date saved.');
+      else setNotice(notice, 'Date saved. Refresh to load the updated ledger.');
+    } catch (error) {
+      setNotice(notice, errorSentence(error, 'The history date could not be saved.'), 'error');
+    } finally {
+      input.disabled = false;
+      save.disabled = false;
+    }
+  });
+  return form;
+}
+
+function countyToday() {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Los_Angeles' }).format(new Date());
 }
 
 /** @param {string} view */
@@ -477,6 +631,7 @@ function selectView(view) {
   for (const button of document.querySelectorAll('[data-view]')) button.setAttribute('aria-pressed', String(button.dataset.view === view));
   for (const name of Object.keys(titles)) element(`${name}-view`).hidden = name !== view;
   element('view-title').textContent = titles[view];
+  element('summary').hidden = view !== 'attention' || !current?.property.property;
 }
 
 function openImport() {
@@ -504,7 +659,9 @@ function updatePropertyReview() {
 
 function setSetupBusy(busy) {
   setupBusy = busy;
-  for (const id of ['setup-address', 'setup-label', 'confirm-parcel', 'lookup-parcels']) element(id).disabled = busy;
+  for (const id of ['setup-label', 'setup-bought-on', 'confirm-parcel', 'lookup-parcels']) element(id).disabled = busy;
+  for (const radio of document.querySelectorAll('[name="lookup-method"]')) radio.disabled = busy;
+  updateLookupMethod();
   for (const radio of element('parcel-options').querySelectorAll('input')) radio.disabled = busy || Boolean(lookup?.truncated);
   element('property-setup').setAttribute('aria-busy', String(busy));
   updatePropertyReview();
@@ -589,7 +746,28 @@ function lookupNotice(coverage) {
   return `${note} ${coverage.detail} Checked ${date(coverage.checked_at, true)}.`;
 }
 
+function updateLookupMethod() {
+  const parcel = document.querySelector('[name="lookup-method"]:checked').value === 'parcel';
+  element('setup-parcel-field').hidden = !parcel;
+  element('setup-address-field').hidden = parcel;
+  element('setup-parcel').disabled = setupBusy || !parcel;
+  element('setup-parcel').required = parcel;
+  element('setup-address').disabled = setupBusy || parcel;
+  element('setup-address').required = !parcel;
+}
+
+for (const radio of document.querySelectorAll('[name="lookup-method"]')) radio.addEventListener('change', () => {
+  invalidatePropertyLookup();
+  updateLookupMethod();
+});
+element('setup-parcel').addEventListener('input', invalidatePropertyLookup);
 element('setup-address').addEventListener('input', invalidatePropertyLookup);
+element('setup-bought-on').max = countyToday();
+element('setup-bought-on').addEventListener('input', () => {
+  setupGeneration += 1;
+  clearPropertyPreview();
+  updatePropertyReview();
+});
 element('setup-label').addEventListener('input', () => {
   setupGeneration += 1;
   clearPropertyPreview();
@@ -609,12 +787,15 @@ element('parcel-lookup-form').addEventListener('submit', async event => {
   element('lookup-parcels').disabled = true;
   setNotice(element('setup-notice'), 'Looking up published county parcel records…');
   try {
-    const result = await api('property/resolve', { method: 'POST', body: JSON.stringify({ address: element('setup-address').value.trim() }), signal: controller.signal });
+    const query = document.querySelector('[name="lookup-method"]:checked').value === 'parcel'
+      ? { parcel: element('setup-parcel').value.trim() }
+      : { address: element('setup-address').value.trim() };
+    const result = await api('property/resolve', { method: 'POST', body: JSON.stringify(query), signal: controller.signal });
     if (generation !== setupGeneration || current?.property.property || !canWrite) return;
     showParcelCandidates(result);
   } catch (error) {
     if (generation !== setupGeneration || error.name === 'AbortError') return;
-    setNotice(element('setup-notice'), `${errorSentence(error, 'The county lookup could not be read.')} The address is still entered, and no property was confirmed.`, 'error');
+    setNotice(element('setup-notice'), `${errorSentence(error, 'The county lookup could not be read.')} Your search is still entered; no property was confirmed.`, 'error');
   } finally {
     if (lookupController === controller) {
       lookupController = null;
@@ -626,7 +807,7 @@ element('review-property').addEventListener('click', async () => {
   if (setupBusy || !selectedParcel || !lookup || lookup.truncated || !element('confirm-parcel').checked || current?.property.property) return;
   const generation = setupGeneration;
   const input = {
-    property: { key: selectedParcel.key, label: element('setup-label').value.trim(), confirmed_at: new Date().toISOString(), confirmation: selectedParcel.evidence },
+    property: { key: selectedParcel.key, label: element('setup-label').value.trim(), bought_on: element('setup-bought-on').value || null, confirmed_at: new Date().toISOString(), confirmation: selectedParcel.evidence },
     observations: [], coverage: [lookup.coverage],
   };
   setSetupBusy(true);
@@ -638,7 +819,7 @@ element('review-property').addEventListener('click', async () => {
     setupKey = requestKey();
     const host = element('property-preview-content');
     host.replaceChildren(node('p', 'This confirms the property binding only. It does not establish a tax balance, settle a bill, or change an existing calendar.'));
-    facts(host, [['Property label', result.input.property.label], ['Street address', selectedParcel.address], ['County', 'Los Angeles County, California'], ['County FIPS', result.input.property.key.jurisdiction], ['Selected parcel', result.input.property.key.parcel], ['Published roll', String(selectedParcel.roll_year)], ['Ledger revision', String(result.revision)]]);
+    facts(host, [['Property label', result.input.property.label], ['Street address', selectedParcel.address], ['County', 'Los Angeles County, California'], ['County FIPS', result.input.property.key.jurisdiction], ['Selected parcel', result.input.property.key.parcel], ['Bought on', result.input.property.bought_on ? date(result.input.property.bought_on) : 'Not set'], ['Published roll', String(selectedParcel.roll_year)]]);
     host.append(node('p', `Preview hash: ${result.hash}`, 'mono'));
     const evidence = node('ul', '', 'evidence-list');
     evidence.append(evidenceItem(result.input.property.confirmation, 'County parcel confirmation'));

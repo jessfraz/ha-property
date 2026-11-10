@@ -9,6 +9,7 @@ async fn malformed_ain_is_rejected_before_any_county_request_instead_of_empty_su
     let at = Utc::now();
     let request = CountySyncRequest {
         property: PropertyBinding {
+            bought_on: None,
             key: BindingKey {
                 jurisdiction: CountyFips::los_angeles(),
                 parcel: ParcelId::try_from("FICTIONAL-NOT-AN-AIN".to_owned()).unwrap(),

@@ -133,9 +133,13 @@ async fn collect_from(
     let published_at = publication_time(client, layer, request.requested_at).await?;
     let mut query_url = layer.clone();
     query_url.set_path(&format!("{}/query", layer.path().trim_end_matches('/')));
+    let where_clause = match request.property.first_roll_year() {
+        Some(year) => format!("AIN = '{ain}' AND RollYear >= '{year:04}'"),
+        None => format!("AIN = '{ain}'"),
+    };
     let query = [
         ("f", "json".to_owned()),
-        ("where", format!("AIN = '{ain}'")),
+        ("where", where_clause),
         ("outFields", ROLL_FIELDS.to_owned()),
         ("returnGeometry", "false".to_owned()),
         ("orderByFields", "RollYear DESC".to_owned()),
@@ -163,29 +167,15 @@ async fn address_candidates_from(
     observed_at: DateTime<Utc>,
     layer: &Url,
 ) -> Result<AddressCandidates, CountyError> {
-    let normalized = address.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.len() < 5
-        || normalized.len() > 120
-        || address.chars().any(char::is_control)
-        || normalized.contains(['%', '_'])
-    {
-        return Err(invalid(
-            "enter a bounded street address without query wildcards",
-        ));
+    if address.len() > 250 {
+        return Err(invalid("enter a bounded street address"));
     }
-    let house_number = normalized
-        .split_whitespace()
-        .next()
-        .and_then(|value| value.parse::<u32>().ok())
-        .filter(|value| i64::from(*value) <= i64::from(i32::MAX))
-        .ok_or_else(|| invalid("begin the street address with its house number"))?;
-    // The county's situs field can contain repeated spaces. The documented SQL
-    // query allows gaps between words; the exact house number and normalized
-    // prefix check below prevent that superset from confirming another address.
-    // User-supplied operators, wildcards, fields and ordering remain forbidden.
-    let literal = normalized
-        .to_uppercase()
-        .split_whitespace()
+    let address = StreetLookup::parse(address)?;
+    // Query a bounded superset without a street suffix or mailing locality.
+    // Exact normalized street matching below admits RD/ROAD, never another road.
+    let literal = address
+        .query_words
+        .iter()
         .map(|word| word.replace('\'', "''"))
         .collect::<Vec<_>>()
         .join("%");
@@ -196,7 +186,10 @@ async fn address_candidates_from(
         ("f", "json".to_owned()),
         (
             "where",
-            format!("SitusHouseNo = {house_number} AND UPPER(PropertyLocation) LIKE '{literal}%'"),
+            format!(
+                "SitusHouseNo = {} AND UPPER(PropertyLocation) LIKE '{literal}%'",
+                address.house
+            ),
         ),
         ("outFields", ADDRESS_FIELDS.to_owned()),
         ("returnGeometry", "false".to_owned()),
@@ -204,13 +197,185 @@ async fn address_candidates_from(
         ("resultRecordCount", MAX_ADDRESS_ROWS.to_string()),
     ];
     let response: GisResponse<AddressAttributes> = get_json(client, &query_url, &query).await?;
-    parse_addresses(
+    parse_candidates(
         response,
-        &normalized.to_uppercase(),
+        &CandidateLookup::Address(address),
         observed_at,
         published_at,
         layer,
     )
+}
+
+pub async fn parcel_candidates(
+    client: &Client,
+    parcel: &str,
+    observed_at: DateTime<Utc>,
+) -> Result<AddressCandidates, CountyError> {
+    let layer = Url::parse(LAYER_URL).map_err(|_| CountyError::Unavailable)?;
+    parcel_candidates_from(client, parcel, observed_at, &layer).await
+}
+
+async fn parcel_candidates_from(
+    client: &Client,
+    parcel: &str,
+    observed_at: DateTime<Utc>,
+    layer: &Url,
+) -> Result<AddressCandidates, CountyError> {
+    let ain = canonical_ain(parcel)?;
+    let published_at = publication_time(client, layer, observed_at).await?;
+    let mut query_url = layer.clone();
+    query_url.set_path(&format!("{}/query", layer.path().trim_end_matches('/')));
+    let query = [
+        ("f", "json".to_owned()),
+        ("where", format!("AIN = '{ain}'")),
+        ("outFields", ADDRESS_FIELDS.to_owned()),
+        ("returnGeometry", "false".to_owned()),
+        ("orderByFields", "AIN ASC,RollYear DESC".to_owned()),
+        ("resultRecordCount", MAX_ADDRESS_ROWS.to_string()),
+    ];
+    let response: GisResponse<AddressAttributes> = get_json(client, &query_url, &query).await?;
+    parse_candidates(
+        response,
+        &CandidateLookup::Parcel(ain),
+        observed_at,
+        published_at,
+        layer,
+    )
+}
+
+enum CandidateLookup {
+    Address(StreetLookup),
+    Parcel(String),
+}
+
+struct StreetLookup {
+    house: u32,
+    street: Vec<String>,
+    unit: Option<String>,
+    complete_street: bool,
+    query_words: Vec<String>,
+}
+
+fn suffix(word: &str) -> Option<&'static str> {
+    match word {
+        "ROAD" | "RD" => Some("RD"),
+        "STREET" | "ST" => Some("ST"),
+        "AVENUE" | "AVE" => Some("AVE"),
+        "DRIVE" | "DR" => Some("DR"),
+        "LANE" | "LN" => Some("LN"),
+        "COURT" | "CT" => Some("CT"),
+        "PLACE" | "PL" => Some("PL"),
+        "BOULEVARD" | "BLVD" => Some("BLVD"),
+        "CIRCLE" | "CIR" => Some("CIR"),
+        "TERRACE" | "TER" => Some("TER"),
+        "WAY" => Some("WAY"),
+        "HIGHWAY" | "HWY" => Some("HWY"),
+        "PARKWAY" | "PKWY" => Some("PKWY"),
+        "TRAIL" | "TRL" => Some("TRL"),
+        _ => None,
+    }
+}
+fn direction(word: &str) -> Option<&'static str> {
+    match word {
+        "NORTH" | "N" => Some("N"),
+        "SOUTH" | "S" => Some("S"),
+        "EAST" | "E" => Some("E"),
+        "WEST" | "W" => Some("W"),
+        "NORTHEAST" | "NE" => Some("NE"),
+        "NORTHWEST" | "NW" => Some("NW"),
+        "SOUTHEAST" | "SE" => Some("SE"),
+        "SOUTHWEST" | "SW" => Some("SW"),
+        _ => None,
+    }
+}
+impl StreetLookup {
+    fn parse(address: &str) -> Result<Self, CountyError> {
+        if address.len() < 5
+            || address.len() > 500
+            || address.chars().any(char::is_control)
+            || address.contains(['%', '_'])
+        {
+            return Err(invalid(
+                "enter a bounded street address without query wildcards",
+            ));
+        }
+        let first_line = address
+            .split(',')
+            .next()
+            .ok_or_else(|| invalid("a street address is required"))?;
+        let mut words = first_line
+            .split_whitespace()
+            .map(|word| word.trim_matches('.').to_uppercase())
+            .collect::<Vec<_>>();
+        let house = words
+            .first()
+            .and_then(|word| word.parse::<u32>().ok())
+            .filter(|n| *n > 0 && *n <= i32::MAX.unsigned_abs())
+            .ok_or_else(|| invalid("begin the street address with its house number"))?;
+        words[0] = house.to_string();
+        let suffix_at = words
+            .iter()
+            .rposition(|word| suffix(word).is_some())
+            .filter(|index| *index >= 2);
+        let mut end = suffix_at.map_or(words.len(), |i| i + 1);
+        if suffix_at.is_some() && words.get(end).is_some_and(|word| direction(word).is_some()) {
+            end += 1;
+        }
+        let unit = words.get(end).and_then(|word| {
+            if matches!(
+                word.as_str(),
+                "UNIT" | "APT" | "APARTMENT" | "SUITE" | "STE" | "#"
+            ) {
+                words.get(end + 1).cloned()
+            } else {
+                word.strip_prefix('#')
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned)
+            }
+        });
+        let street = words[..end]
+            .iter()
+            .map(|word| {
+                suffix(word)
+                    .or_else(|| direction(word))
+                    .unwrap_or(word)
+                    .to_owned()
+            })
+            .collect();
+        let name_start = if words.get(1).is_some_and(|word| direction(word).is_some()) {
+            2
+        } else {
+            1
+        };
+        let name_end = suffix_at.unwrap_or(end);
+        if name_start >= name_end {
+            return Err(invalid("include the street name"));
+        }
+        let query_words = std::iter::once(house.to_string())
+            .chain(words[name_start..name_end].iter().cloned())
+            .collect();
+        Ok(Self {
+            house,
+            street,
+            unit,
+            complete_street: suffix_at.is_some(),
+            query_words,
+        })
+    }
+    fn matches(&self, address: &str) -> Result<bool, CountyError> {
+        let other = Self::parse(address)?;
+        if self.house != other.house {
+            return Err(CountyError::BindingMismatch);
+        }
+        Ok((if self.complete_street {
+            self.street == other.street
+        } else {
+            other.street.starts_with(&self.street)
+        }) && self
+            .unit
+            .as_ref()
+            .is_none_or(|unit| other.unit.as_ref() == Some(unit)))
+    }
 }
 
 async fn publication_time(
@@ -274,6 +439,14 @@ fn parse_rolls(
         return Err(CountyError::Unavailable);
     };
     if features.is_empty() {
+        if request.property.bought_on.is_some() {
+            return Ok(AssessmentRead {
+                observations:Vec::new(),
+                coverage:Coverage {capability:CoverageCapability::Assessments,status:CoverageStatus::Partial,
+                    checked_at:request.requested_at,
+                    detail:"The county returned no annual roll within the configured history window. The source supplies roll years, not precise assessment event dates; this is not proof that no assessment or bill exists.".into()},
+            });
+        }
         return Err(invalid(
             "the county returned no annual assessment record for the confirmed parcel",
         ));
@@ -340,20 +513,31 @@ fn parse_rolls(
             serde_json::to_vec(&(layer.as_str(), expected_ain, published_at, &attributes))
                 .map_err(|_| invalid("county assessment evidence could not be encoded"))?;
         let id = format!("la-assessment-{}", hex::encode(Sha256::digest(encoded)));
-        observations.push(Observation {
+        let observation = Observation {
             id,
             binding: request.property.key.clone(),
             evidence: evidence(year, published_at, request.requested_at, layer),
             observation: ObservationData::Assessment(Assessment {
                 fiscal_year: year,
-                assessed_value_cents: values.total.checked_mul(100).ok_or_else(|| invalid("county assessed value overflow"))?,
+                assessed_value_cents: values
+                    .total
+                    .checked_mul(100)
+                    .ok_or_else(|| invalid("county assessed value overflow"))?,
                 description: format!(
                     "Published annual roll {year}: land {}; improvements {}; fixtures {}; personal property {}; exemptions {}; net taxable value {}. GIS publication {}. Not a tax bill or live balance.",
-                    dollars(values.land), dollars(values.improvements), dollars(values.fixtures), dollars(values.personal_property),
-                    dollars(values.exemptions), dollars(values.net_taxable), published_at.to_rfc3339(),
+                    dollars(values.land),
+                    dollars(values.improvements),
+                    dollars(values.fixtures),
+                    dollars(values.personal_property),
+                    dollars(values.exemptions),
+                    dollars(values.net_taxable),
+                    published_at.to_rfc3339(),
                 ),
             }),
-        });
+        };
+        if request.property.includes_observation(&observation) {
+            observations.push(observation);
+        }
     }
     Ok(AssessmentRead {
         observations,
@@ -451,7 +635,7 @@ fn canonical_ain(value: &str) -> Result<String, CountyError> {
             .any(|character| !character.is_ascii_digit() && character != '-' && character != ' ')
     {
         return Err(invalid(
-            "Los Angeles assessment lookup requires a confirmed ten-digit AIN",
+            "Los Angeles parcel lookup requires a ten-digit AIN",
         ));
     }
     Ok(ain)
@@ -518,9 +702,9 @@ fn annual_coverage(
         ),
     }
 }
-fn parse_addresses(
+fn parse_candidates(
     response: GisResponse<AddressAttributes>,
-    expected_prefix: &str,
+    expected: &CandidateLookup,
     observed_at: DateTime<Utc>,
     published_at: DateTime<Utc>,
     layer: &Url,
@@ -577,28 +761,13 @@ fn parse_addresses(
                 continue;
             }
         };
-        let returned_house = candidate
-            .address
-            .split_whitespace()
-            .next()
-            .and_then(|value| value.parse::<u32>().ok());
-        let requested_house = expected_prefix
-            .split_whitespace()
-            .next()
-            .and_then(|value| value.parse::<u32>().ok());
-        if returned_house.is_none() || returned_house != requested_house {
-            return Err(CountyError::BindingMismatch);
-        }
         valid_rows += 1;
-        if !candidate
-            .address
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_uppercase()
-            .starts_with(expected_prefix)
-        {
-            continue;
+        match expected {
+            CandidateLookup::Address(address) if !address.matches(&candidate.address)? => continue,
+            CandidateLookup::Parcel(ain) if candidate.key.parcel.as_str() != ain => {
+                return Err(CountyError::BindingMismatch);
+            }
+            _ => {}
         }
         let key = candidate.key.parcel.as_str().to_owned();
         if let Some(prior) = candidates.get(&key) {
@@ -677,6 +846,7 @@ mod tests {
         let observed = timestamp("2030-11-10T12:00:00Z");
         CountySyncRequest {
             property: PropertyBinding {
+                bought_on: None,
                 key: BindingKey {
                     jurisdiction: CountyFips::los_angeles(),
                     parcel: ParcelId::try_from("0000-000-001".to_owned()).unwrap(),
@@ -1048,7 +1218,7 @@ mod tests {
         let query = params(&captured[1]);
         assert_eq!(
             query["where"],
-            "SitusHouseNo = 42 AND UPPER(PropertyLocation) LIKE '42%EXAMPLE%AVE%'"
+            "SitusHouseNo = 42 AND UPPER(PropertyLocation) LIKE '42%EXAMPLE%'"
         );
         assert_eq!(query["outFields"], "AIN,RollYear,PropertyLocation");
         assert_eq!(query["resultRecordCount"], "100");
@@ -1081,7 +1251,7 @@ mod tests {
         let captured = server.finish();
         assert_eq!(
             params(&captured[1])["where"],
-            "SitusHouseNo = 42 AND UPPER(PropertyLocation) LIKE '42%O''EXAMPLE%AVE%'"
+            "SitusHouseNo = 42 AND UPPER(PropertyLocation) LIKE '42%O''EXAMPLE%'"
         );
         let unreachable = Url::parse("http://127.0.0.1:1/FeatureServer/0").unwrap();
         for input in ["%", "42 EXAMPLE%", "42 EXAMPLE_", "42\nExample"] {
@@ -1178,5 +1348,179 @@ mod tests {
         assert_eq!(identities, ["0000000001", "0000000002"]);
         assert!(result.candidates[0].address.contains("  "));
         server.finish();
+    }
+
+    #[tokio::test]
+    async fn full_mailing_address_matches_county_abbreviated_street() {
+        let server = Server::new(vec![
+            (200, metadata()),
+            (
+                200,
+                records(
+                    vec![address(
+                        "0000000001",
+                        2030,
+                        "42 EXAMPLE RD EXAMPLE CITY CA 90000",
+                    )],
+                    false,
+                ),
+            ),
+        ]);
+        let result = address_candidates_from(
+            &client(),
+            "42 Example Road, Example City, CA 90000",
+            request().requested_at,
+            &server.layer,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].key.parcel.as_str(), "0000000001");
+        assert_eq!(result.coverage.status, CoverageStatus::Partial);
+        server.finish();
+    }
+
+    #[tokio::test]
+    async fn parcel_lookup_canonicalizes_ain_and_rejects_foreign_candidates() {
+        use crate::county::los_angeles::assessment::parcel_candidates_from;
+        let server = Server::new(vec![
+            (200, metadata()),
+            (
+                200,
+                records(
+                    vec![
+                        address("0000000001", 2029, "42 EXAMPLE RD EXAMPLE CITY CA"),
+                        address("0000000001", 2030, "42 EXAMPLE RD EXAMPLE CITY CA"),
+                    ],
+                    false,
+                ),
+            ),
+        ]);
+        let result = parcel_candidates_from(
+            &client(),
+            "0000-000-001",
+            request().requested_at,
+            &server.layer,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].key.parcel.as_str(), "0000000001");
+        assert_eq!(result.candidates[0].roll_year, 2030);
+        let calls = server.finish();
+        assert_eq!(params(&calls[1])["where"], "AIN = '0000000001'");
+        let server = Server::new(vec![
+            (200, metadata()),
+            (
+                200,
+                records(
+                    vec![address("0000000002", 2030, "42 EXAMPLE RD EXAMPLE CITY CA")],
+                    false,
+                ),
+            ),
+        ]);
+        assert!(matches!(
+            parcel_candidates_from(
+                &client(),
+                "0000000001",
+                request().requested_at,
+                &server.layer
+            )
+            .await,
+            Err(CountyError::BindingMismatch)
+        ));
+        server.finish();
+        let unreachable = Url::parse("http://127.0.0.1:1/FeatureServer/0").unwrap();
+        for parcel in [
+            "000000001",
+            "00000000001",
+            "0000000001' OR 1=1",
+            "AIN:0000000001",
+        ] {
+            assert!(matches!(
+                parcel_candidates_from(&client(), parcel, request().requested_at, &unreachable)
+                    .await,
+                Err(CountyError::InvalidEvidence(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn suffix_direction_and_mailing_locality_never_select_another_street() {
+        for query in [
+            "42 North Example Road, Example City, CA 90000",
+            "42 N Example Rd. Example City CA 90000",
+        ] {
+            let server = Server::new(vec![
+                (200, metadata()),
+                (
+                    200,
+                    records(
+                        vec![
+                            address("0000000001", 2030, "42 N EXAMPLE RD UNIT 1 EXAMPLE CITY CA"),
+                            address(
+                                "0000000002",
+                                2030,
+                                "42 NORTH EXAMPLE ROAD UNIT 2 EXAMPLE CITY CA",
+                            ),
+                            address(
+                                "0000000003",
+                                2030,
+                                "42 N EXAMPLE TERRACE RD EXAMPLE CITY CA",
+                            ),
+                            address("0000000004", 2030, "42 S EXAMPLE RD EXAMPLE CITY CA"),
+                        ],
+                        true,
+                    ),
+                ),
+            ]);
+            let result =
+                address_candidates_from(&client(), query, request().requested_at, &server.layer)
+                    .await
+                    .unwrap();
+            let ids: Vec<_> = result
+                .candidates
+                .iter()
+                .map(|c| c.key.parcel.as_str())
+                .collect();
+            assert_eq!(ids, ["0000000001", "0000000002"]);
+            assert!(result.truncated);
+            server.finish();
+        }
+    }
+
+    #[tokio::test]
+    async fn bought_on_filters_roll_year_without_substituting_new_publication_time() {
+        let server = Server::new(vec![
+            (200, metadata()),
+            (
+                200,
+                records(vec![roll(2023), roll(2024), roll(2025)], false),
+            ),
+        ]);
+        let mut request = request();
+        request.property.bought_on = Some(chrono::NaiveDate::from_ymd_opt(2024, 6, 1).unwrap());
+        let result = collect_from(&request, &client(), &server.layer)
+            .await
+            .unwrap();
+        assert_eq!(result.observations.len(), 1);
+        assert!(
+            matches!(&result.observations[0].observation,ObservationData::Assessment(value) if value.fiscal_year==2025)
+        );
+        let calls = server.finish();
+        assert_eq!(
+            params(&calls[1])["where"],
+            "AIN = '0000000001' AND RollYear >= '2025'"
+        );
+        let empty = Server::new(vec![
+            (200, metadata()),
+            (200, records(Vec::<RollAttributes>::new(), false)),
+        ]);
+        let result = collect_from(&request, &client(), &empty.layer)
+            .await
+            .unwrap();
+        assert!(result.observations.is_empty());
+        assert_eq!(result.coverage.status, CoverageStatus::Partial);
+        empty.finish();
     }
 }
