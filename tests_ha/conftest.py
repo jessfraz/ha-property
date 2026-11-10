@@ -15,6 +15,7 @@ from pytest_aiohttp.plugin import AiohttpServer
 from pytest_homeassistant.common import MockConfigEntry, MockUser
 
 from custom_components.property import PropertyConfigEntry
+from custom_components.property._app_kit.version import LOADED_VERSION
 from custom_components.property.const import CONF_BACKEND_URL, CONF_TOKEN, DOMAIN
 
 
@@ -54,6 +55,7 @@ class Backend:
     received: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event = field(default_factory=asyncio.Event)
     role: str = "integration"
+    version: str = LOADED_VERSION
     headers: list[dict[str, str]] = field(default_factory=list)
     responses: dict[str, tuple[int, bytes, dict[str, str]]] = field(
         default_factory=dict
@@ -70,7 +72,12 @@ class Backend:
             return web.Response(status=status, body=body, headers=headers)
         if request.path == "/v1/system":
             return web.json_response(
-                {"service": "property", "api_version": 1, "role": self.role}
+                {
+                    "service": "property",
+                    "api_version": 1,
+                    "role": self.role,
+                    "version": self.version,
+                }
             )
         if request.path == "/v1/summary":
             return web.Response(

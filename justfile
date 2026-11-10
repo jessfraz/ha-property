@@ -8,6 +8,10 @@ rust:
     cargo test --locked --all-features
 
 ha:
+    uv run --frozen python scripts/build-integration
+    just ha-installed
+
+ha-installed:
     cargo build --locked --bins
     uv sync --frozen
     uv run --frozen ruff check custom_components tests_ha tests_web scripts

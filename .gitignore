@@ -10,3 +10,4 @@ __pycache__/
 *.sqlite3*
 *.db*
 /local/
+/custom_components/property/_app_kit/

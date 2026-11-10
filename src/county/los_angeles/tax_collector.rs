@@ -904,6 +904,8 @@ mod tests {
     fn read_request(
         stream: &mut TcpStream,
     ) -> Option<(String, String, BTreeMap<String, String>, String)> {
+        // On macOS, accepted sockets inherit the listener's nonblocking flag.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(3)))
             .unwrap();

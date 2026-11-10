@@ -12,6 +12,7 @@ from .client import InvalidCredential, PropertyClient, ResponseTooLarge
 from .const import CONF_BACKEND_URL, CONF_TOKEN
 from .coordinator import PropertyCoordinator
 from .http import PropertyView
+from .repairs import VersionChecks
 
 PLATFORMS = [Platform.SENSOR, Platform.CALENDAR]
 type PropertyConfigEntry = ConfigEntry[PropertyCoordinator]
@@ -58,6 +59,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: PropertyConfigEntry) -> 
     coordinator = PropertyCoordinator(hass, entry, client)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+    VersionChecks(hass, entry).async_start()
     entry.async_on_unload(coordinator.async_stop)
     entry.async_on_unload(entry.add_update_listener(async_options_updated))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
