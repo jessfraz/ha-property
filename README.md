@@ -12,8 +12,9 @@ and the `ha-property` JSON CLI. No LLM or paid data provider is required.
 ## Install
 
 Add this repository to the HA app store and install **Property**. Install the
-`custom_components/property` integration through HACS or copy that directory to
-HA's `custom_components`, restart HA, then add **Property** under integrations.
+integration through Marketplace or HACS, or extract the release's `property.zip`
+into HA's `custom_components/property`. Restart HA, then add **Property** under
+integrations.
 The integration pairs with the app through authenticated Supervisor discovery.
 
 Open the app, look up the address in the county's published records, then choose

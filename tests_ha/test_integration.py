@@ -1,17 +1,97 @@
 """Exercise native sensors, county-local calendar, Repairs and real HTTP."""
 
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant.common import async_fire_time_changed
 from pytest_homeassistant.typing import ClientSessionGenerator, WebSocketGenerator
 
 from custom_components.property import PropertyConfigEntry
+from custom_components.property._app_kit.version import LOADED_VERSION
 from custom_components.property.const import DOMAIN
 from custom_components.property.models import PropertyData
 
 from .conftest import Backend, installment, summary
+
+
+async def test_version_repair_keeps_ledger_and_requires_fresh_parity(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    entry: PropertyConfigEntry,
+    backend: Backend,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    assert await async_setup_component(hass, "repairs", {})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    issue_id = f"{entry.entry_id}_version_mismatch"
+    registry = ir.async_get(hass)
+
+    async def observe_next_version() -> None:
+        freezer.tick(timedelta(minutes=1))
+        async_fire_time_changed(hass, dt_util.utcnow())
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    backend.version = "0.0.1"
+    await observe_next_version()
+    issue = registry.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None and issue.is_fixable and issue.is_persistent
+    assert issue.config_entry_id == entry.entry_id
+    assert issue.translation_placeholders == {
+        "app_version": "0.0.1",
+        "integration_version": LOADED_VERSION,
+    }
+    client = await hass_client()
+    result = await client.post(
+        "/api/repairs/issues/fix", json={"handler": DOMAIN, "issue_id": issue_id}
+    )
+    assert result.status == 200
+    assert (await result.json())["reason"] == "managed_update_unavailable"
+    backend.responses["/v1/system"] = (503, b"", {})
+    await observe_next_version()
+    assert registry.async_get_issue(DOMAIN, issue_id) is not None
+    assert hass.states.is_state("sensor.property_needs_attention", "2")
+    backend.responses.pop("/v1/system")
+    backend.version = LOADED_VERSION
+    await observe_next_version()
+    assert registry.async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_projection_publishes_while_version_endpoint_is_blocked(
+    hass: HomeAssistant,
+    entry: PropertyConfigEntry,
+    backend: Backend,
+) -> None:
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert hass.states.is_state("sensor.property_needs_attention", "2")
+    request_start = len(backend.requests)
+    backend.blocked_path = "/v1/system"
+    backend.document["needs_attention"] = 3
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=1))
+    refresh = asyncio.create_task(entry.runtime_data.async_refresh())
+    try:
+        async with asyncio.timeout(2):
+            await backend.received.wait()
+            await asyncio.shield(refresh)
+        assert hass.states.is_state("sensor.property_needs_attention", "3")
+
+        async with asyncio.timeout(2):
+            await entry.runtime_data.async_refresh()
+        assert (
+            sum(path == "/v1/system" for _, path, _ in backend.requests[request_start:])
+            == 1
+        )
+        async with asyncio.timeout(2):
+            assert await hass.config_entries.async_unload(entry.entry_id)
+    finally:
+        backend.release.set()
+        await refresh
+        await hass.async_block_till_done(wait_background_tasks=True)
 
 
 async def test_native_entities_preserve_unknown_zero_outage_and_recovery(
