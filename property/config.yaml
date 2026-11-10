@@ -1,5 +1,5 @@
 name: Property
-version: "0.1.0"
+version: "0.1.1"
 slug: property
 description: An evidence-backed property tax ledger
 url: https://github.com/jessfraz/ha-property

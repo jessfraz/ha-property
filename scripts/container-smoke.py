@@ -1,4 +1,4 @@
-"""Exercise app startup, Supervisor-shaped restore, and ownership boundaries."""
+"""Exercise private-data startup, native restore states, and mount boundaries."""
 
 from __future__ import annotations
 
@@ -10,6 +10,42 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+
+NATIVE_RESTORE = """
+import io
+import importlib.metadata
+from pathlib import Path
+import shutil
+import sys
+import tarfile
+import tempfile
+
+from securetar import SecureTarArchive, SecureTarFile, atomic_contents_add
+
+assert sys.version_info[:3] == (3, 14, 10)
+assert importlib.metadata.version("securetar") == "2026.10.0"
+password = "fictional-container-restore-only"
+encrypted = io.BytesIO()
+with SecureTarArchive(fileobj=encrypted, mode="w", password=password,
+                      create_version=3) as archive:
+    with archive.create_tar("./app.tar.gz") as private:
+        atomic_contents_add(private, Path("/source"),
+                            file_filter=lambda _: False, arcname="data")
+encrypted.seek(0)
+with tempfile.TemporaryDirectory() as extracted, \\
+     tarfile.open(fileobj=encrypted, mode="r:") as outer:
+    member = next(item for item in outer if item.name.endswith("app.tar.gz"))
+    with SecureTarFile(fileobj=outer.extractfile(member), password=password,
+                       gzip=True) as private:
+        private.extractall(path=extracted, filter="tar")
+    shutil.copytree(Path(extracted, "data"), "/restored", symlinks=True,
+                    dirs_exist_ok=True)
+for name in ("credentials.json", "property.sqlite3", "property.sync.sqlite3"):
+    item = Path("/restored", name).stat()
+    assert item.st_uid == 0 and item.st_gid == 0
+    assert item.st_mode & 0o777 == 0o644
+    assert item.st_mtime > 946684800
+"""
 
 
 def docker(*args: str) -> str:
@@ -78,16 +114,25 @@ def expect_refusal(container: str) -> None:
 
 def main() -> None:
     image = sys.argv[1]
+    architecture = docker("image", "inspect", image, "--format", "{{.Architecture}}")
     if len(sys.argv) > 2:
-        assert (
-            docker("image", "inspect", image, "--format", "{{.Architecture}}")
-            == sys.argv[2]
-        )
+        assert architecture == sys.argv[2]
+    supervisor_images = {
+        "amd64": (
+            "ghcr.io/home-assistant/amd64-hassio-supervisor@"
+            "sha256:f5f3728cf7a9a637485576c7588d209a1527fe9d6bb46f7326ef9aa629c55713"
+        ),
+        "arm64": (
+            "ghcr.io/home-assistant/aarch64-hassio-supervisor@"
+            "sha256:0f606324063cd5e7e591fb71efb5214ff56a05514898e33e461757950abc2914"
+        ),
+    }
+    supervisor_image = supervisor_images[architecture]
     volumes = [
         docker("volume", "create", f"property-smoke-{uuid.uuid4().hex}")
-        for _ in range(3)
+        for _ in range(4)
     ]
-    live, copied, outside = volumes
+    live, permissive, restrictive, outside = volumes
     containers: list[str] = []
     try:
 
@@ -109,20 +154,44 @@ def main() -> None:
                 script,
             )
 
-        def manifest(volume: str) -> str:
-            # Hashes and modes stay in memory, including private credentials.
-            # Ownership is deliberately separate: Supervisor restores recreate
-            # files as root while retaining their contents and restrictive modes.
+        def contents(volume: str) -> str:
+            # Hashes stay in memory, including private credentials. Native
+            # restore may lose private modes; only bytes and links are immutable.
             return volume_shell(
                 volume,
                 "find -P /data -xdev -type f -exec sha256sum -- {} + | sort; "
-                "find -P /data -xdev ! -type l -exec stat -c '%a %n' -- {} + | sort",
+                "find -P /data -xdev -type l -printf '%p %l\\n' | sort",
+            )
+
+        def mtimes(volume: str) -> str:
+            return volume_shell(
+                volume,
+                "find -P /data -xdev -exec stat -c '%Y %n' -- {} + | sort",
+            )
+
+        def private_modes(volume: str) -> None:
+            # Check the credential first so a baseline failure identifies the
+            # observed root-owned 0644 restore, rather than a directory mismatch.
+            credential_mode = volume_shell(
+                volume, "stat -c '%a:%u:%g' /data/credentials.json"
+            )
+            if credential_mode != "600:10001:10001":
+                raise RuntimeError(
+                    "restored credentials were not normalized to private mode 0600"
+                )
+            assert not volume_shell(
+                volume,
+                "find -P /data -xdev -type f ! -perm 0600 -print -quit; "
+                "find -P /data -xdev -type d ! -perm 0700 -print -quit; "
+                "find -P /data -xdev \\( ! -uid 10001 -o ! -gid 10001 \\) -print -quit",
             )
 
         def start(volume: str) -> tuple[str, str]:
             container = docker(
                 "run",
                 "-d",
+                "--cap-drop",
+                "FOWNER",
                 "-p",
                 "127.0.0.1::8080",
                 "-v",
@@ -140,7 +209,7 @@ def main() -> None:
                 raise RuntimeError("server did not drop to uid10001")
             return container, origin
 
-        volume_shell(live, "printf '%s' '{}' > /data/options.json")
+        volume_shell(live, "umask 077; printf '%s' '{}' > /data/options.json")
         container, origin = start(live)
         # Only disposable app-mode credentials cross this process boundary.
         # They stay in memory and are never printed or attached to CI artifacts.
@@ -176,105 +245,142 @@ def main() -> None:
             live,
             "umask 077; printf 'outside-private-data\\n' > /outside/sentinel; "
             "mkdir /outside/private /data/owned-nested; "
+            "chmod 640 /outside/sentinel; chmod 750 /outside /outside/private; "
             "printf 'preserved-private-state\\n' > /data/owned-nested/marker; "
             "chown -R 10001:10001 /data/owned-nested; "
             "ln -s /outside /data/external-directory; "
-            "ln -s /outside/sentinel /data/external-file",
+            "ln -s /outside/sentinel /data/external-file; "
+            "find -P /data -xdev -type f -exec touch -d @946684800 -- {} +",
         )
-        original = manifest(live)
-        # Equivalent ownership/mode semantics to Supervisor's root-run
-        # shutil.copytree(..., symlinks=True), not cp -a's old-owner preservation.
-        docker(
-            "run",
-            "--rm",
-            "--user",
-            "0:0",
-            "--entrypoint",
-            "/bin/sh",
-            "-v",
-            f"{live}:/from:ro",
-            "-v",
-            f"{copied}:/to",
-            image,
-            "-eu",
-            "-c",
-            "cp -pR --no-preserve=ownership --no-dereference /from/. /to/",
-        )
-        volume_shell(
-            copied,
-            "test \"$(stat -c '%a:%u:%g' /data/credentials.json)\" = 600:0:0; "
-            "test \"$(stat -c '%a:%u:%g' /data/property.sqlite3)\" = 600:0:0; "
-            "test \"$(stat -c '%a:%u:%g' /data/property.sync.sqlite3)\" = 600:0:0; "
-            "test \"$(stat -c '%a:%u:%g' /data/owned-nested/marker)\" = 600:0:0; "
-            "test -L /data/external-directory; test -L /data/external-file",
-        )
-        unreadable = subprocess.run(
-            [
-                "docker",
+        original = contents(live)
+        # Exercise the same SecureTar extraction/copy path as Supervisor. Dropped
+        # FOWNER reproduces loss of chmod/mtime after app-owned extraction.
+        # The restrictive root-created copy covers the separate UID0-header case.
+        for copied, mode in ((permissive, "644"), (restrictive, "600")):
+            if mode == "644":
+                subprocess.run(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "--network",
+                        "none",
+                        "--read-only",
+                        "--cap-drop",
+                        "FOWNER",
+                        "--tmpfs",
+                        "/tmp:rw,nosuid,nodev,noexec",
+                        "-v",
+                        f"{live}:/source:ro",
+                        "-v",
+                        f"{copied}:/restored",
+                        "--entrypoint",
+                        "python3",
+                        "--interactive",
+                        supervisor_image,
+                    ],
+                    input=NATIVE_RESTORE,
+                    text=True,
+                    check=True,
+                )
+            else:
+                docker(
+                    "run",
+                    "--rm",
+                    "--user",
+                    "0:0",
+                    "--cap-drop",
+                    "FOWNER",
+                    "--entrypoint",
+                    "/bin/sh",
+                    "-v",
+                    f"{live}:/from:ro",
+                    "-v",
+                    f"{copied}:/to",
+                    image,
+                    "-eu",
+                    "-c",
+                    "cp -pR --no-preserve=ownership --no-dereference /from/. /to/",
+                )
+            volume_shell(
+                copied,
+                f"test \"$(stat -c '%a:%u:%g' /data/credentials.json)\" = {mode}:0:0; "
+                f"test \"$(stat -c '%a:%u:%g' /data/property.sqlite3)\" = {mode}:0:0; "
+                "test \"$(stat -c '%a:%u:%g' /data/property.sync.sqlite3)\" "
+                f"= {mode}:0:0; "
+                "test \"$(stat -c '%a:%u:%g' /data/owned-nested/marker)\" "
+                f"= {mode}:0:0; "
+                "test -L /data/external-directory; test -L /data/external-file; "
+                + (
+                    "test \"$(stat -c '%Y' /data/credentials.json)\" -gt 946684800"
+                    if mode == "644"
+                    else "test \"$(stat -c '%Y' /data/credentials.json)\" = 946684800"
+                ),
+            )
+            assert original == contents(copied)
+            restored_mtimes = mtimes(copied)
+            print(
+                f"Restore precondition verified: root-owned {mode} files, "
+                "FOWNER dropped."
+            )
+            # Exercise the production entrypoint before SQLite can write. Mode
+            # normalization must preserve every byte, symlink and extracted mtime.
+            docker(
                 "run",
                 "--rm",
-                "--entrypoint",
-                "gosu",
+                "--cap-drop",
+                "FOWNER",
                 "-v",
                 f"{copied}:/data",
+                "-v",
+                f"{outside}:/outside",
                 image,
-                "property",
-                "test",
-                "-r",
-                "/data/credentials.json",
-            ],
-            capture_output=True,
-            check=False,
-        )
-        if unreadable.returncode != 1:
-            raise RuntimeError("restore did not recreate unreadable private files")
-        assert original == manifest(copied)
-        # Exercise the real ownership repair without opening SQLite, so exact
-        # file bytes/modes can be compared before ordinary runtime writes.
-        docker(
-            "run",
-            "--rm",
-            "-v",
-            f"{copied}:/data",
-            "-v",
-            f"{outside}:/outside",
-            image,
-            "--version",
-        )
-        assert original == manifest(copied)
-        restored, destination = start(copied)
-        if credential_bytes != subprocess.check_output(
-            ["docker", "exec", restored, "cat", "/data/credentials.json"]
-        ):
-            raise RuntimeError("restored app credentials changed")
-        for path in (
-            "/data/credentials.json",
-            "/data/property.sqlite3",
-            "/data/property.sync.sqlite3",
-            "/data/owned-nested/marker",
-        ):
-            assert (
-                docker("exec", restored, "stat", "-c", "%a:%u:%g", path)
-                == "600:10001:10001"
+                "--version",
             )
+            assert original == contents(copied)
+            assert restored_mtimes == mtimes(copied)
+            print(
+                "Restored credential mode before service startup: "
+                + volume_shell(copied, "stat -c '%a:%u:%g' /data/credentials.json")
+            )
+            restored, destination = start(copied)
+            if credential_bytes != subprocess.check_output(
+                ["docker", "exec", restored, "cat", "/data/credentials.json"]
+            ):
+                raise RuntimeError("restored app credentials changed")
+            private_modes(copied)
+            assert before == request(destination, "/v1/summary", token=token)
+            assert (
+                request(
+                    destination, "/v1/imports", apply, preview["revision"], token=token
+                )["replayed"]
+                is True
+            )
+            docker("stop", "--time", "120", restored)
+            # Ordinary restart begins with app-owned private inodes. Permission
+            # repair must work without FOWNER here as well as on a root restore.
+            restarted, destination = start(copied)
+            private_modes(copied)
+            assert credential_bytes == subprocess.check_output(
+                ["docker", "exec", restarted, "cat", "/data/credentials.json"]
+            )
+            assert before == request(destination, "/v1/summary", token=token)
+            assert (
+                request(
+                    destination, "/v1/imports", apply, preview["revision"], token=token
+                )["replayed"]
+                is True
+            )
+            docker("stop", "--time", "120", restarted)
         volume_shell(
             copied,
-            "test \"$(stat -c '%a:%u:%g' /outside/sentinel)\" = 600:0:0; "
-            "test \"$(stat -c '%a:%u:%g' /outside/private)\" = 700:0:0; "
-            "test \"$(stat -c '%u:%g' /outside)\" = 0:0; "
+            "test \"$(stat -c '%a:%u:%g' /outside/sentinel)\" = 640:0:0; "
+            "test \"$(stat -c '%a:%u:%g' /outside/private)\" = 750:0:0; "
+            "test \"$(stat -c '%a:%u:%g' /outside)\" = 750:0:0; "
             'test "$(cat /outside/sentinel)" = outside-private-data; '
             "test \"$(stat -c '%u:%g' /data/external-file)\" = 10001:10001; "
             "test \"$(stat -c '%u:%g' /data/external-directory)\" = 10001:10001",
         )
-        assert before == request(destination, "/v1/summary", token=token)
-        assert (
-            request(
-                destination, "/v1/imports", apply, preview["revision"], token=token
-            )["replayed"]
-            is True
-        )
-        docker("stop", "--time", "120", restored)
-
         # Named volumes share a filesystem: -xdev alone would still traverse a
         # nested bind mount. Reject it before any ownership change can occur.
         boundary = docker(
@@ -322,9 +428,83 @@ def main() -> None:
         assert "real directory" in container_logs(root_link)
         volume_shell(
             copied,
-            "test \"$(stat -c '%a:%u:%g' /outside/sentinel)\" = 600:0:0; "
-            "test \"$(stat -c '%a:%u:%g' /outside/private)\" = 700:0:0; "
-            "test \"$(stat -c '%u:%g' /outside)\" = 0:0; "
+            "test \"$(stat -c '%a:%u:%g' /outside/sentinel)\" = 640:0:0; "
+            "test \"$(stat -c '%a:%u:%g' /outside/private)\" = 750:0:0; "
+            "test \"$(stat -c '%a:%u:%g' /outside)\" = 750:0:0; "
+            'test "$(cat /outside/sentinel)" = outside-private-data',
+        )
+
+        # A hardlink can alias an outside inode without traversing a link or
+        # another mount. Create the alias within one backing volume, then expose
+        # only its private subdirectory as /data to the real entrypoint.
+        volume_shell(copied, "ln /outside/sentinel /outside/private/outside-alias")
+        outside_link = docker(
+            "create",
+            "--cap-drop",
+            "FOWNER",
+            "--mount",
+            f"type=volume,source={outside},target=/data,volume-subpath=private",
+            image,
+            "--version",
+        )
+        containers.append(outside_link)
+        expect_refusal(outside_link)
+        assert "outside hard links" in container_logs(outside_link)
+        volume_shell(
+            copied,
+            "test \"$(stat -c '%a:%u:%g:%h' /outside/sentinel)\" = 640:0:0:2; "
+            "test \"$(stat -c '%a:%u:%g' /outside/private)\" = 750:0:0; "
+            'test "$(cat /outside/sentinel)" = outside-private-data; '
+            "rm /outside/private/outside-alias; "
+            "mkfifo -m 640 /outside/private/unsupported-fifo",
+        )
+        unsupported = docker(
+            "create",
+            "--cap-drop",
+            "FOWNER",
+            "--mount",
+            f"type=volume,source={outside},target=/data,volume-subpath=private",
+            image,
+            "--version",
+        )
+        containers.append(unsupported)
+        expect_refusal(unsupported)
+        assert "unsupported entries" in container_logs(unsupported)
+        volume_shell(
+            copied,
+            "test \"$(stat -c '%a:%u:%g' /outside/sentinel)\" = 640:0:0; "
+            "test \"$(stat -c '%a:%u:%g' /outside/private)\" = 750:0:0; "
+            "test \"$(stat -c '%a:%u:%g' /outside/private/unsupported-fifo)\" "
+            "= 640:0:0; "
+            'test "$(cat /outside/sentinel)" = outside-private-data; '
+            "rm /outside/private/unsupported-fifo; "
+            "umask 077; printf 'internal-publication-state\\n' "
+            "> /outside/private/atomic-one; "
+            "ln /outside/private/atomic-one /outside/private/atomic-two",
+        )
+        # Atomic publication can retain both private names after a crash. Accept
+        # and preserve this state when every alias is within the private tree.
+        docker(
+            "run",
+            "--rm",
+            "--cap-drop",
+            "FOWNER",
+            "--mount",
+            f"type=volume,source={outside},target=/data,volume-subpath=private",
+            image,
+            "--version",
+        )
+        volume_shell(
+            copied,
+            "test \"$(stat -c '%a:%u:%g:%h' /outside/private/atomic-one)\" "
+            "= 600:10001:10001:2; "
+            "test \"$(stat -c '%a:%u:%g:%h' /outside/private/atomic-two)\" "
+            "= 600:10001:10001:2; "
+            "test \"$(stat -c '%a:%u:%g' /outside/private)\" = 700:10001:10001; "
+            "test \"$(stat -c '%i' /outside/private/atomic-one)\" "
+            "= \"$(stat -c '%i' /outside/private/atomic-two)\"; "
+            'test "$(cat /outside/private/atomic-one)" = internal-publication-state; '
+            "test \"$(stat -c '%a:%u:%g' /outside/sentinel)\" = 640:0:0; "
             'test "$(cat /outside/sentinel)" = outside-private-data',
         )
     finally:
@@ -346,9 +526,10 @@ def main() -> None:
         if cleanup_failed:
             raise RuntimeError("task container or volume cleanup failed")
     print(
-        "Container smoke passed: uid10001, root-owned restrictive restore, "
-        "unchanged bytes/modes/credentials, ledger/replay durability, "
-        "and symlink/mount boundaries."
+        "Container smoke passed: uid10001, root-owned 0644/0600 restores, "
+        "files 0600/directories 0700, unchanged bytes/mtimes/credentials, "
+        "ledger/replay durability, FOWNER-free restarts, "
+        "and symlink/mount/hardlink boundaries."
     )
 
 
