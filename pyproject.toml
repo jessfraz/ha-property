@@ -28,6 +28,9 @@ addopts = "--strict-markers -p no:respx"
 target-version = "py314"
 line-length = 88
 
+[tool.ruff.per-file-target-version]
+"scripts/*" = "py311"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "ANN"]
 

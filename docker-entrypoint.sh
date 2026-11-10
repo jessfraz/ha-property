@@ -1,10 +1,19 @@
 #!/bin/sh
 set -eu
+
+# Native restores recreate private files as root while retaining their modes.
+# Repair only this volume before dropping privileges, without following links
+# or crossing a nested mount into somebody else's storage.
 if [ "$(id -u)" -eq 0 ]; then
-    chown property:property /data
-    if [ -f /data/options.json ]; then
-        chown property:property /data/options.json
+    if [ -L /data ] || [ ! -d /data ]; then
+        echo 'Private data must be a real directory' >&2
+        exit 1
     fi
+    if ! awk '$5 ~ /^\/data\// { exit 1 }' /proc/self/mountinfo; then
+        echo 'Private data mount boundary is unavailable or contains nested mounts' >&2
+        exit 1
+    fi
+    find -P /data -xdev -exec chown --no-dereference property:property -- {} +
     exec gosu property "$0" "$@"
 fi
 umask 077
