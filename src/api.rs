@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
 use dropshot::{
     ApiDescription, Body, ClientErrorStatusCode as Status, ConfigDropshot, HttpError,
     HttpResponseAccepted, HttpResponseHeaders, HttpResponseOk, HttpServer, HttpServerStarter, Path,
@@ -22,10 +22,10 @@ use crate::{
         CountyError,
         los_angeles::assessment::{self, AddressCandidates},
     },
-    store::{ApplyRequest, ApplyResult, ObservationKind, Preview, Store},
+    store::{ApplyRequest, ApplyResult, ObservationKind, Preview, PropertyState, Store},
     sync::{SyncRun, SyncStore},
     tax::{
-        ledger::{Coverage, ImportInput, Observation, PropertyBinding, TaxError},
+        ledger::{ImportInput, Observation, TaxError},
         reconcile::{BillView, InstallmentView, Reconciliation, reconcile},
     },
 };
@@ -70,17 +70,32 @@ pub struct System {
     pub schema_version: u32,
     pub role: String,
 }
+pub type PropertyView = PropertyState;
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct PropertyView {
-    pub revision: i64,
-    pub property: Option<PropertyBinding>,
-    pub coverage: Vec<Coverage>,
+#[serde(untagged, deny_unknown_fields)]
+pub enum ResolveProperty {
+    Address { address: String },
+    Parcel { parcel: String },
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct ResolveAddress {
-    address: String,
+pub struct PropertyUpdate {
+    #[serde(deserialize_with = "required_bought_on")]
+    #[schemars(required, schema_with = "nullable_bought_on_schema")]
+    pub bought_on: Option<NaiveDate>,
+}
+fn required_bought_on<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<NaiveDate>, D::Error> {
+    Option::<NaiveDate>::deserialize(deserializer)
+}
+fn nullable_bought_on_schema(
+    generator: &mut schemars::r#gen::SchemaGenerator,
+) -> schemars::schema::Schema {
+    // `required` enforces presence; an explicit null still clears the setting.
+    <Option<NaiveDate> as JsonSchema>::json_schema(generator)
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Page<T> {
@@ -356,22 +371,48 @@ async fn property(
     request: RequestContext<Arc<Context>>,
 ) -> Result<Private<PropertyView>, HttpError> {
     authenticate(&request, false)?;
-    let snapshot = request.context().store.snapshot().await?;
-    Ok(private(
-        PropertyView {
-            revision: snapshot.revision,
-            property: snapshot.property,
-            coverage: snapshot.coverage,
-        },
-        Some(snapshot.revision),
-    ))
+    let state = request.context().store.property_state().await?;
+    let revision = state.revision;
+    Ok(private(state, Some(revision)))
+}
+
+/// Change only the optional history boundary; retain the confirmed parcel and evidence.
+#[endpoint {method=PATCH,path="/v1/property",tags=["property"],request_body_max_bytes=1024}]
+async fn update_property(
+    request: RequestContext<Arc<Context>>,
+    body: TypedBody<PropertyUpdate>,
+) -> Result<Private<PropertyView>, HttpError> {
+    authenticate(&request, true)?;
+    let revision = header(&request, "if-match")
+        .and_then(|v| v.strip_prefix('"'))
+        .and_then(|v| v.strip_suffix('"'))
+        .and_then(|v| {
+            v.parse::<i64>()
+                .ok()
+                .filter(|revision| revision.to_string() == v)
+        })
+        .filter(|v| *v >= 0)
+        .ok_or_else(|| {
+            fail(
+                Status::PRECONDITION_REQUIRED,
+                "if_match_required",
+                "Supply the current property ETag in If-Match.",
+            )
+        })?;
+    let state = request
+        .context()
+        .store
+        .update_bought_on(body.into_inner().bought_on, revision, Utc::now())
+        .await?;
+    let revision = state.revision;
+    Ok(private(state, Some(revision)))
 }
 
 /// Resolve a bounded LA County address candidate set without selecting or saving a parcel.
 #[endpoint {method=POST,path="/v1/property/resolve",tags=["property"],request_body_max_bytes=8192}]
 async fn resolve_property(
     request: RequestContext<Arc<Context>>,
-    body: TypedBody<ResolveAddress>,
+    body: TypedBody<ResolveProperty>,
 ) -> Result<Private<AddressCandidates>, HttpError> {
     authenticate(&request, true)?;
     let client = reqwest::Client::builder()
@@ -384,21 +425,30 @@ async fn resolve_property(
                 "The county lookup is unavailable.".into(),
             )
         })?;
-    let result = assessment::address_candidates(&client, &body.into_inner().address, Utc::now())
-        .await
-        .map_err(|error| match error {
-            CountyError::InvalidEvidence(TaxError::Invalid(message)) => {
-                fail(Status::BAD_REQUEST, "invalid_input", message)
-            }
-            _ => HttpError::for_unavail(
-                Some("county_unavailable".into()),
-                "The county lookup is unavailable. No property was saved.".into(),
-            ),
-        })?;
+    let result = match body.into_inner() {
+        ResolveProperty::Address { address } => {
+            assessment::address_candidates(&client, &address, Utc::now()).await
+        }
+        ResolveProperty::Parcel { parcel } => {
+            assessment::parcel_candidates(&client, &parcel, Utc::now()).await
+        }
+    }
+    .map_err(|error| match error {
+        CountyError::InvalidEvidence(TaxError::Invalid(message)) => {
+            fail(Status::BAD_REQUEST, "invalid_input", message)
+        }
+        _ => HttpError::for_unavail(
+            Some("county_unavailable".into()),
+            "The county lookup is unavailable. No property was saved.".into(),
+        ),
+    })?;
     Ok(private(result, None))
 }
 async fn projection(context: &Context) -> Result<Reconciliation, HttpError> {
-    Ok(reconcile(&context.store.snapshot().await?, Utc::now()))
+    Ok(reconcile(
+        &context.store.history_snapshot().await?,
+        Utc::now(),
+    ))
 }
 /// Reconcile notices, scoped balances and explicit payment allocations.
 #[endpoint {method=GET,path="/v1/summary",tags=["tax"]}]
@@ -659,12 +709,19 @@ async fn sync_get(
     path: Path<SyncPath>,
 ) -> Result<Private<SyncRun>, HttpError> {
     authenticate(&request, false)?;
-    let run = request
+    let mut run = request
         .context()
         .syncs
         .get(path.into_inner().id)
         .await?
         .ok_or_else(|| fail(Status::NOT_FOUND, "not_found", "Sync not found."))?;
+    let state = request.context().store.property_state().await?;
+    if let Some(binding) = &state.property
+        && let Some(page) = &mut run.page
+    {
+        page.observations
+            .retain(|value| binding.includes_observation(value));
+    }
     Ok(private(run, None))
 }
 /// Read the schema generated from the running service's registered typed endpoints.
@@ -678,7 +735,7 @@ async fn schema(request: RequestContext<Arc<Context>>) -> Result<Response<Body>,
 }
 pub fn description() -> anyhow::Result<ApiDescription<Arc<Context>>> {
     let mut api = ApiDescription::new();
-    let endpoints: [dropshot::ApiEndpoint<Arc<Context>>; 20] = [
+    let endpoints: [dropshot::ApiEndpoint<Arc<Context>>; 21] = [
         index.into(),
         app_js.into(),
         app_css.into(),
@@ -687,6 +744,7 @@ pub fn description() -> anyhow::Result<ApiDescription<Arc<Context>>> {
         health.into(),
         system.into(),
         property.into(),
+        update_property.into(),
         resolve_property.into(),
         summary.into(),
         bills.into(),

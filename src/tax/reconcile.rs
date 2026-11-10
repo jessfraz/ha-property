@@ -220,6 +220,24 @@ fn notice_conflicts(history: &[&Observation]) -> bool {
 
 /// Pure projection. No network calls, wall-clock reads, provider guessing or model inference.
 pub fn reconcile(snapshot: &Snapshot, now: DateTime<Utc>) -> Reconciliation {
+    let scoped;
+    let snapshot =
+        if let Some(property) = snapshot.property.as_ref().filter(|p| p.bought_on.is_some()) {
+            scoped = Snapshot {
+                revision: snapshot.revision,
+                property: snapshot.property.clone(),
+                coverage: property.history_coverage(&snapshot.coverage),
+                observations: snapshot
+                    .observations
+                    .iter()
+                    .filter(|value| property.includes_observation(value))
+                    .cloned()
+                    .collect(),
+            };
+            &scoped
+        } else {
+            snapshot
+        };
     let mut issues = Vec::new();
     let mut identities = BTreeSet::new();
     let mut notices: BTreeMap<&BillIdentity, Vec<&Observation>> = BTreeMap::new();

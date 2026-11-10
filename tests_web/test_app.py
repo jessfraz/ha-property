@@ -42,7 +42,7 @@ async def test_empty_setup_then_reviewed_import_updates_all_views(
 ) -> None:
     await login(page, property_backend)
     await expect(
-        page.get_by_role("heading", name="Confirm a property to begin")
+        page.get_by_role("heading", name="Add a property", exact=True)
     ).to_be_visible()
     await expect(page.locator("#summary")).to_contain_text("Unknown")
     await paste_import(page, evidence_input())
@@ -63,17 +63,15 @@ async def test_empty_setup_then_reviewed_import_updates_all_views(
     await expect(page.locator("#property-label")).to_have_text("Example property")
     await expect(page.locator("#summary")).to_contain_text("$900.00")
     await expect(page.locator("#summary")).to_contain_text("2 installments due")
-    await expect(page.locator("#attention-items > article")).to_have_count(7)
+    await expect(page.locator("#attention-items > article")).to_have_count(4)
     missing = page.locator("#attention-items > article").filter(
-        has=page.get_by_role("heading", name="Missing notice", exact=True)
+        has=page.get_by_role("heading", name="1 bill needs a notice", exact=True)
     )
     await expect(missing).to_contain_text("FY 2030 · MISSING · version 1")
     for capability in ("Notices", "Assessments", "Balances", "Payments"):
-        await expect(
-            page.locator("#attention-items").get_by_text(
-                "County source: " + capability, exact=True
-            )
-        ).to_be_visible()
+        await expect(page.locator("#attention-items")).to_contain_text(
+            capability + ": Partial"
+        )
     await missing.get_by_role("button", name="View affected bill").click()
     await expect(
         page.get_by_role("dialog", name="Bill awaiting notice")
@@ -83,6 +81,8 @@ async def test_empty_setup_then_reviewed_import_updates_all_views(
     await expect(page.locator("#property-view")).to_be_visible()
     await expect(page.locator("#sources-title")).to_be_focused()
     await page.get_by_role("button", name="Needs attention", exact=True).click()
+    await expect(page.locator("#deadline-section")).not_to_be_visible()
+    await page.get_by_role("button", name="Bills", exact=True).click()
     await expect(page.locator("#installments article")).to_have_count(4)
     second = page.locator("#installments article").filter(
         has=page.get_by_role("heading", name="Installment 2", exact=True)
@@ -91,7 +91,6 @@ async def test_empty_setup_then_reviewed_import_updates_all_views(
     for card in await second.all():
         await expect(card).not_to_contain_text("Paid")
         await expect(card).to_contain_text("Unknown")
-    await page.get_by_role("button", name="Bills", exact=True).click()
     await expect(page.locator("#bills article")).to_have_count(3)
     await expect(
         page.get_by_role("heading", name="Bill awaiting notice", exact=True)

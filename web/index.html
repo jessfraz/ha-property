@@ -38,15 +38,14 @@
             <h2 id="attention-title" class="sr-only">Items needing attention</h2>
             <div id="attention-items" class="stack"></div>
           </section>
-          <section id="deadline-section" class="section" hidden aria-labelledby="deadline-title">
-            <h2 id="deadline-title">All installment evidence</h2><div id="installments" class="stack"></div>
-          </section>
         </div>
         <section id="bills-view" hidden aria-labelledby="bills-title">
           <h2 id="bills-title" class="sr-only">Tax bills</h2><div id="bills" class="stack"></div>
+          <section id="deadline-section" class="section" hidden aria-labelledby="deadline-title">
+            <h2 id="deadline-title">All installment evidence</h2><div id="installments" class="stack"></div>
+          </section>
           <section id="payments-section" class="section" hidden aria-labelledby="payments-title">
             <h2 id="payments-title">Payment evidence</h2>
-            <p class="muted">Submitted, bank-settled, and county-posted payments are different states. Only explicit allocations affect an installment.</p>
             <div id="payments" class="stack"></div>
           </section>
         </section>
@@ -58,10 +57,12 @@
           <div id="binding" class="panel"></div>
           <section id="property-setup" class="panel section" hidden aria-labelledby="setup-title">
             <h2 id="setup-title">Find the county parcel</h2>
-            <p>Search the county’s published assessment records, then choose and confirm the exact parcel. An address match does not confirm a property automatically.</p>
+            <p>Enter the parcel number from a county record, or search by address. Review the match before confirming.</p>
             <form id="parcel-lookup-form">
               <label for="setup-county">County</label><select id="setup-county" disabled><option value="06037">Los Angeles County, California · FIPS 06037</option></select>
-              <label>Street address<input id="setup-address" type="text" required minlength="5" maxlength="120" autocomplete="street-address" placeholder="Street address, including unit if applicable"></label>
+              <fieldset class="lookup-method"><legend>Search by</legend><label class="check"><input type="radio" name="lookup-method" value="parcel" checked>Parcel number (APN)</label><label class="check"><input type="radio" name="lookup-method" value="address">Street address</label></fieldset>
+              <label id="setup-parcel-field">Parcel number (APN)<input id="setup-parcel" type="text" required maxlength="20" inputmode="numeric" autocomplete="off" placeholder="Ten digits, with or without dashes"></label>
+              <label id="setup-address-field" hidden>Street address<input id="setup-address" type="text" disabled minlength="5" maxlength="120" autocomplete="street-address" placeholder="Street address, including city and ZIP if available"></label>
               <button id="lookup-parcels" type="submit">Search county records</button>
             </form>
             <p id="setup-notice" hidden></p>
@@ -70,6 +71,8 @@
               <fieldset id="parcel-candidates" class="parcel-candidates"><legend>Select the exact parcel</legend><div id="parcel-options" class="stack"></div></fieldset>
               <div id="property-confirmation" class="section" hidden>
                 <label>Property label<input id="setup-label" type="text" required maxlength="200" value="Property" autocomplete="off"></label>
+                <label>Bought on (optional)<input id="setup-bought-on" type="date" aria-describedby="setup-history-help"></label>
+                <p id="setup-history-help" class="field-help">Only include records from this date onward. Leave blank for all available history.</p>
                 <label class="check"><input id="confirm-parcel" type="checkbox">The county and selected parcel match this property on the official county record.</label>
                 <button id="review-property" type="button" disabled>Review property confirmation</button>
               </div>
@@ -86,11 +89,6 @@
             <p id="sync-status" role="status" aria-live="polite" class="muted"></p>
             <div id="coverage" class="stack"></div>
           </section>
-          <aside class="panel section">
-            <h2>Evidence, not assumptions</h2>
-            <p>Unknown balances stay unknown. A missing notice stays unresolved. Annual and supplemental bills are tracked separately, including adjusted versions.</p>
-            <p class="muted">County collection uses read-only lookups. Property does not submit support or duplicate-notice requests, make payments, or change existing calendar reminders.</p>
-          </aside>
         </section>
       </div>
     </main>

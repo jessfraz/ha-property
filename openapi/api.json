@@ -1052,6 +1052,13 @@
       "PropertyBinding": {
         "additionalProperties": false,
         "properties": {
+          "bought_on": {
+            "default": null,
+            "description": "Optional history boundary. Clearing it reveals retained evidence again.",
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
           "confirmation": {
             "$ref": "#/components/schemas/Evidence"
           },
@@ -1075,7 +1082,7 @@
         ],
         "type": "object"
       },
-      "PropertyView": {
+      "PropertyState": {
         "properties": {
           "coverage": {
             "items": {
@@ -1099,6 +1106,20 @@
         "required": [
           "coverage",
           "revision"
+        ],
+        "type": "object"
+      },
+      "PropertyUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "bought_on": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "bought_on"
         ],
         "type": "object"
       },
@@ -1178,17 +1199,33 @@
         ],
         "type": "object"
       },
-      "ResolveAddress": {
-        "additionalProperties": false,
-        "properties": {
-          "address": {
-            "type": "string"
+      "ResolveProperty": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "address": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "address"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "parcel": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "parcel"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "address"
-        ],
-        "type": "object"
+        ]
       },
       "SourceKind": {
         "enum": [
@@ -1290,7 +1327,7 @@
   "info": {
     "description": "Evidence-backed property tax ledger. Bearer authentication or trusted HA ingress. Imports require exact preview hash, If-Match revision and an idempotency key. No payment submission or mark-paid API.",
     "title": "Property API",
-    "version": "0.1.1"
+    "version": "0.1.2"
   },
   "openapi": "3.0.3",
   "paths": {
@@ -1561,7 +1598,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PropertyView"
+                  "$ref": "#/components/schemas/PropertyState"
                 }
               }
             },
@@ -1594,6 +1631,57 @@
         "tags": [
           "property"
         ]
+      },
+      "patch": {
+        "operationId": "update_property",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PropertyUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PropertyState"
+                }
+              }
+            },
+            "description": "successful operation",
+            "headers": {
+              "cache-control": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                },
+                "style": "simple"
+              },
+              "etag": {
+                "schema": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "style": "simple"
+              }
+            }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/Error"
+          },
+          "5XX": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "summary": "Change only the optional history boundary; retain the confirmed parcel and evidence.",
+        "tags": [
+          "property"
+        ]
       }
     },
     "/v1/property/resolve": {
@@ -1603,7 +1691,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ResolveAddress"
+                "$ref": "#/components/schemas/ResolveProperty"
               }
             }
           },

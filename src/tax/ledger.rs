@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -83,6 +83,94 @@ pub struct PropertyBinding {
     /// Confirmed by the user against authoritative county parcel evidence.
     pub confirmed_at: DateTime<Utc>,
     pub confirmation: Evidence,
+    /// Optional history boundary. Clearing it reveals retained evidence again.
+    #[serde(default)]
+    pub bought_on: Option<NaiveDate>,
+}
+
+impl PropertyBinding {
+    pub fn timezone(&self) -> Result<Tz, TaxError> {
+        if self.key.jurisdiction == CountyFips::los_angeles() {
+            Ok(chrono_tz::America::Los_Angeles)
+        } else {
+            Err(TaxError::Invalid(
+                "the county history timezone is unsupported",
+            ))
+        }
+    }
+
+    pub fn validate_history(&self, now: DateTime<Utc>) -> Result<(), TaxError> {
+        if let Some(date) = self.bought_on {
+            let today = now.with_timezone(&self.timezone()?).date_naive();
+            if date.year() < 1900 || date > today {
+                return Err(TaxError::Invalid(
+                    "bought_on must be a valid date from 1900 through today in the county timezone",
+                ));
+            }
+            self.history_start()?;
+        }
+        Ok(())
+    }
+
+    /// Annual rolls provide a year, not an exact assessment event date. An
+    /// intrayear cutoff excludes that ambiguous year rather than inventing one.
+    pub fn first_roll_year(&self) -> Option<i32> {
+        self.bought_on
+            .map(|date| date.year() + i32::from(date.ordinal() != 1))
+    }
+
+    pub fn history_start(&self) -> Result<Option<DateTime<Utc>>, TaxError> {
+        self.bought_on
+            .map(|date| {
+                self.timezone()?
+                    .from_local_datetime(
+                        &date
+                            .and_hms_opt(0, 0, 0)
+                            .ok_or(TaxError::Invalid("bought_on is invalid"))?,
+                    )
+                    .single()
+                    .map(|value| value.with_timezone(&Utc))
+                    .ok_or(TaxError::Invalid(
+                        "bought_on is ambiguous in the county timezone",
+                    ))
+            })
+            .transpose()
+    }
+
+    pub fn includes_observation(&self, observation: &Observation) -> bool {
+        let Some(date) = self.bought_on else {
+            return true;
+        };
+        if let ObservationData::Assessment(assessment) = &observation.observation {
+            return self
+                .first_roll_year()
+                .is_some_and(|year| i32::from(assessment.fiscal_year) >= year);
+        }
+        self.timezone().is_ok_and(|zone| {
+            observation
+                .evidence
+                .effective_at
+                .with_timezone(&zone)
+                .date_naive()
+                >= date
+        })
+    }
+
+    pub fn history_coverage(&self, coverage: &[Coverage]) -> Vec<Coverage> {
+        let mut result = coverage.to_vec();
+        if let Some(date) = self.bought_on {
+            for item in &mut result {
+                item.detail.push_str(&format!(" History begins {date} in the county timezone; earlier saved evidence is retained."));
+                if item.capability == CoverageCapability::Assessments {
+                    if date.ordinal() != 1 && item.status == CoverageStatus::Complete {
+                        item.status = CoverageStatus::Partial;
+                    }
+                    item.detail.push_str(" Annual rolls supply a year, not a precise assessment event date. An intrayear cutoff excludes that year's ambiguous roll; publication time is never substituted for the record date.");
+                }
+            }
+        }
+        result
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

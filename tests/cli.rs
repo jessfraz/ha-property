@@ -56,6 +56,96 @@ fn success<T: for<'de> Deserialize<'de>>(output: Output) -> Envelope<T> {
     assert!(output.stderr.is_empty());
     serde_json::from_slice(&output.stdout).unwrap()
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn actual_cli_edits_history_and_validates_resolution_inputs() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("ledger.sqlite3"))
+        .await
+        .unwrap();
+    let syncs = SyncStore::open(dir.path().join("sync.sqlite3"))
+        .await
+        .unwrap();
+    let server = api::start(
+        "127.0.0.1:0".parse().unwrap(),
+        Arc::new(Context::new(store.clone(), syncs.clone(), TOKEN)),
+    )
+    .unwrap();
+    let origin = format!("http://{}", server.local_addr());
+    let input: ImportInput =
+        serde_json::from_str(include_str!("fixtures/import.example.json")).unwrap();
+    let preview = store.preview(input).await.unwrap();
+    store
+        .apply(property::store::ApplyRequest {
+            preview,
+            if_match: 0,
+            idempotency_key: "cli-confirm-history".into(),
+        })
+        .await
+        .unwrap();
+    let before = store.snapshot().await.unwrap().observations;
+    let changed: Envelope<PropertyView> = success(
+        call(
+            origin.clone(),
+            vec![
+                "history".into(),
+                "from".into(),
+                "2020-06-01".into(),
+                "--if-match".into(),
+                "\"1\"".into(),
+            ],
+            true,
+        )
+        .await,
+    );
+    assert_eq!(changed.status, 200);
+    assert_eq!(changed.etag.as_deref(), Some("\"2\""));
+    assert_eq!(
+        changed.body.property.unwrap().bought_on,
+        Some(chrono::NaiveDate::from_ymd_opt(2020, 6, 1).unwrap())
+    );
+    let cleared: Envelope<PropertyView> = success(
+        call(
+            origin.clone(),
+            vec![
+                "history".into(),
+                "all".into(),
+                "--if-match".into(),
+                "\"2\"".into(),
+            ],
+            true,
+        )
+        .await,
+    );
+    assert!(cleared.body.property.unwrap().bought_on.is_none());
+    assert_eq!(store.snapshot().await.unwrap().observations, before);
+    let invalid = call(
+        origin.clone(),
+        vec!["resolve".into(), "--parcel".into(), "invalid".into()],
+        true,
+    )
+    .await;
+    assert!(!invalid.status.success());
+    let error: Diagnostic = serde_json::from_slice(&invalid.stderr).unwrap();
+    assert_eq!(error.status, Some(400));
+    assert_eq!(error.error_code, "invalid_input");
+    let both = call(
+        origin,
+        vec![
+            "resolve".into(),
+            "--parcel".into(),
+            "0000000001".into(),
+            "--address".into(),
+            "42 Example Road".into(),
+        ],
+        true,
+    )
+    .await;
+    assert_eq!(both.status.code(), Some(2));
+    server.close().await.unwrap();
+    syncs.close().await.unwrap();
+    store.close().await.unwrap();
+}
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn actual_cli_preview_apply_replay_list_detail_and_errors() {
     let dir = tempfile::tempdir().unwrap();

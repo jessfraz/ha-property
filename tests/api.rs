@@ -421,3 +421,265 @@ async fn payment_pages_remain_readable_over_the_bounded_ha_transport() {
     syncs.close().await.unwrap();
     store.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn existing_property_history_window_preserves_binding_and_saved_evidence() {
+    use chrono::NaiveDate;
+    use property::tax::ledger::{Assessment, ObservationData};
+    #[derive(serde::Serialize)]
+    struct HistoryUpdate {
+        bought_on: Option<NaiveDate>,
+    }
+    #[derive(serde::Deserialize)]
+    struct CurrentProperty {
+        property: CurrentBinding,
+    }
+    #[derive(serde::Deserialize)]
+    struct CurrentBinding {
+        bought_on: Option<NaiveDate>,
+    }
+
+    let (_dir, store, syncs, _context, server) = setup().await;
+    let origin = format!("http://{}", server.local_addr());
+    let client = reqwest::Client::new();
+    let mut sample = input();
+    let payment = sample
+        .observations
+        .iter()
+        .find(|value| matches!(value.observation, ObservationData::Payment(_)))
+        .unwrap()
+        .clone();
+    sample.observations.clear();
+    for year in [2019, 2020, 2021] {
+        let mut row = payment.clone();
+        row.id = format!("assessment-{year}");
+        row.observation = ObservationData::Assessment(Assessment {
+            fiscal_year: year,
+            assessed_value_cents: 100_000,
+            description: "Fictional annual roll".into(),
+        });
+        sample.observations.push(row);
+    }
+    for (id, at) in [
+        ("payment-before", "2020-06-01T06:59:59Z"),
+        ("payment-on", "2020-06-01T07:00:00Z"),
+    ] {
+        let mut row = payment.clone();
+        row.id = id.into();
+        if let ObservationData::Payment(value) = &mut row.observation {
+            value.reference = id.into();
+        }
+        row.evidence.effective_at = at.parse().unwrap();
+        sample.observations.push(row);
+    }
+    let preview = store.preview(sample.clone()).await.unwrap();
+    store
+        .apply(ApplyRequest {
+            preview,
+            if_match: 0,
+            idempotency_key: "confirm-example".into(),
+        })
+        .await
+        .unwrap();
+    let before = store.snapshot().await.unwrap();
+    let date = NaiveDate::from_ymd_opt(2020, 6, 1).unwrap();
+    let response = client
+        .patch(format!("{origin}/v1/property"))
+        .bearer_auth(OWNER)
+        .header("If-Match", "\"1\"")
+        .json(&HistoryUpdate {
+            bought_on: Some(date),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["etag"], "\"2\"");
+    let current: CurrentProperty = response.json().await.unwrap();
+    assert_eq!(current.property.bought_on, Some(date));
+    let after = store.snapshot().await.unwrap();
+    assert_eq!(before.observations, after.observations);
+    assert_eq!(
+        before.property.as_ref().unwrap().key,
+        after.property.as_ref().unwrap().key
+    );
+    assert_eq!(
+        before.property.as_ref().unwrap().confirmation,
+        after.property.as_ref().unwrap().confirmation
+    );
+    for (path, expected) in [
+        ("assessments", "assessment-2021"),
+        ("payments", "payment-on"),
+    ] {
+        let page: Page<property::tax::ledger::Observation> = client
+            .get(format!("{origin}/v1/tax/{path}?limit=1"))
+            .bearer_auth(OWNER)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, expected);
+        assert!(page.next_page.is_none());
+    }
+    let summary: Reconciliation = client
+        .get(format!("{origin}/v1/summary"))
+        .bearer_auth(OWNER)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(summary.assessment_count, 1);
+    assert_eq!(summary.payment_count, 1);
+    let stale = client
+        .patch(format!("{origin}/v1/property"))
+        .bearer_auth(OWNER)
+        .header("If-Match", "\"1\"")
+        .json(&HistoryUpdate { bought_on: None })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), 409);
+
+    // An ordinary evidence import must retain the independently edited setting.
+    let preview = store.preview(sample).await.unwrap();
+    let revision = preview.revision;
+    let result = store
+        .apply(ApplyRequest {
+            preview,
+            if_match: revision,
+            idempotency_key: "import-keeps-history".into(),
+        })
+        .await
+        .unwrap();
+    let current: CurrentProperty = client
+        .get(format!("{origin}/v1/property"))
+        .bearer_auth(OWNER)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(current.property.bought_on, Some(date));
+    let response = client
+        .patch(format!("{origin}/v1/property"))
+        .bearer_auth(OWNER)
+        .header("If-Match", format!("\"{}\"", result.revision))
+        .json(&HistoryUpdate { bought_on: None })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let summary: Reconciliation = client
+        .get(format!("{origin}/v1/summary"))
+        .bearer_auth(OWNER)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(summary.assessment_count, 3);
+    assert_eq!(summary.payment_count, 2);
+    assert_eq!(
+        store.snapshot().await.unwrap().observations,
+        before.observations
+    );
+    server.close().await.unwrap();
+    syncs.close().await.unwrap();
+    store.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn history_edits_require_admin_valid_dates_and_current_revision() {
+    let (_dir, store, syncs, _context, server) = setup().await;
+    let origin = format!("http://{}", server.local_addr());
+    let client = reqwest::Client::new();
+    let preview = store.preview(input()).await.unwrap();
+    store
+        .apply(ApplyRequest {
+            preview,
+            if_match: 0,
+            idempotency_key: "confirm-history-validation".into(),
+        })
+        .await
+        .unwrap();
+    let endpoint = format!("{origin}/v1/property");
+    let response = client
+        .patch(&endpoint)
+        .bearer_auth(INTEGRATION)
+        .header("If-Match", "\"1\"")
+        .header("Content-Type", "application/json")
+        .body(r#"{"bought_on":null}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 403);
+    let response = client
+        .patch(&endpoint)
+        .bearer_auth(OWNER)
+        .header("Content-Type", "application/json")
+        .body(r#"{"bought_on":null}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 428);
+    for body in [
+        r#"{"bought_on":"2999-01-01"}"#,
+        r#"{"bought_on":"2020-02-30"}"#,
+        r#"{"bought_on":""}"#,
+        r#"{}"#,
+        r#"{"bought_on":null,"label":"replace"}"#,
+    ] {
+        let response = client
+            .patch(&endpoint)
+            .bearer_auth(OWNER)
+            .header("If-Match", "\"1\"")
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400, "{body}");
+    }
+    let update = |date: &'static str| {
+        client
+            .patch(&endpoint)
+            .bearer_auth(OWNER)
+            .header("If-Match", "\"1\"")
+            .header("Content-Type", "application/json")
+            .body(date)
+            .send()
+    };
+    let (a, b) = tokio::join!(
+        update(r#"{"bought_on":"2020-01-01"}"#),
+        update(r#"{"bought_on":"2021-01-01"}"#)
+    );
+    let mut statuses = [a.unwrap().status().as_u16(), b.unwrap().status().as_u16()];
+    statuses.sort();
+    assert_eq!(statuses, [200, 409]);
+    assert_eq!(store.snapshot().await.unwrap().revision, 2);
+    for body in [
+        r#"{"address":"42 Example Road","parcel":"0000000001"}"#,
+        r#"{}"#,
+        r#"{"parcel":"0000000001","confirm":true}"#,
+    ] {
+        let response = client
+            .post(format!("{origin}/v1/property/resolve"))
+            .bearer_auth(OWNER)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400);
+    }
+    server.close().await.unwrap();
+    syncs.close().await.unwrap();
+    store.close().await.unwrap();
+}

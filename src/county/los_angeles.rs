@@ -105,6 +105,7 @@ impl County for LosAngeles {
         {
             return Err(CountyError::Unavailable);
         }
+        observations.retain(|value| request.property.includes_observation(value));
         ImportInput {
             property: request.property.clone(),
             observations: observations.clone(),

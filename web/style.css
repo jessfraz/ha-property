@@ -24,6 +24,7 @@ p { line-height: 1.55; }
 .record-heading p { margin: 0; }
 .record-heading .amount { font-family: var(--mono); font-size: 16px; white-space: nowrap; }
 .record > p:last-child { margin-bottom: 0; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .record .actions { margin-top: 16px; }
 .record-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0 0; font-size: 12px; color: var(--muted); }
 .record-meta span { overflow-wrap: anywhere; }
@@ -79,6 +80,25 @@ summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .preview-summary p { margin: 4px 0; }
 .preview-summary .mono { overflow-wrap: anywhere; font-size: 11px; }
 .issue button { margin-top: 12px; }
+.issue-group > p { margin-top: 8px; }
+.issue-records { list-style: none; padding: 0; margin: 14px 0; }
+.issue-records li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.issue-records li:last-child { border-bottom: 0; }
+.issue-records button { margin: 0; white-space: nowrap; }
+.bill-year { gap: 8px; }
+.bill-year + .bill-year { margin-top: 16px; }
+.bill-year h2 { margin-bottom: 4px; }
+.bill-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 20px; padding: 16px; }
+.bill-row .record-heading { grid-column: 1 / -1; }
+.bill-row .bill-balance { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 0; font-size: 13px; }
+.bill-row .actions { margin: 0; }
+.property-date { margin-top: 24px; }
+.property-date input { display: block; max-width: 240px; margin-top: 8px; }
+.property-date button { margin-top: 8px; }
+.field-help { display: block; margin: 8px 0; font-size: 13px; color: var(--muted); font-weight: 400; }
+.lookup-method { display: flex; flex-wrap: wrap; gap: 12px 24px; padding: 0; border: 0; margin: 0; }
+.lookup-method legend { margin-bottom: 8px; }
+.lookup-method .check { margin: 0; }
 @media (max-width: 600px) {
   .summary { grid-template-columns: 1fr; gap: 8px; }
   .metric { grid-template-columns: 1fr 1fr; gap: 4px 12px; padding: 16px; align-items: center; }
@@ -90,8 +110,9 @@ summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
   .record-heading { flex-wrap: wrap; gap: 8px; }
   .section-heading { align-items: flex-start; }
   .section-heading button { max-width: 160px; }
-  dl { grid-template-columns: 1fr; gap: 5px; }
-  dd { margin-bottom: 9px; }
-  .view-switch { gap: 6px; }
-  .view-switch button { padding-inline: 10px; }
+  dl { grid-template-columns: minmax(88px, .5fr) minmax(0, 1fr); gap: 8px 12px; }
+  .view-switch { flex-wrap: nowrap; overflow-x: auto; gap: 4px; }
+  .view-switch button { flex: 0 0 auto; padding-inline: 8px; font-size: 12px; }
+  .issue-records li { align-items: flex-start; }
+  .bill-row { grid-template-columns: 1fr; }
 }

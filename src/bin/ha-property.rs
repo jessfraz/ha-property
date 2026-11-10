@@ -7,7 +7,8 @@ use std::{
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use property::{
-    api::{ApiError, Health, Page, PropertyView, System},
+    api::{ApiError, Health, Page, PropertyUpdate, PropertyView, ResolveProperty, System},
+    county::los_angeles::assessment::AddressCandidates,
     store::{ApplyRequest, ApplyResult, Preview},
     sync::SyncRun,
     tax::{
@@ -52,6 +53,11 @@ enum Command {
     Health,
     System,
     Show,
+    /// Find official county candidates. A result never confirms a property.
+    Resolve(Resolve),
+    /// Change the optional history boundary on the confirmed property.
+    #[command(subcommand)]
+    History(History),
     Summary,
     #[command(subcommand)]
     Tax(Tax),
@@ -59,6 +65,27 @@ enum Command {
     Imports(Imports),
     #[command(subcommand)]
     Sync(Sync),
+}
+#[derive(Args)]
+#[group(required = true, multiple = false)]
+struct Resolve {
+    #[arg(long)]
+    address: Option<String>,
+    #[arg(long, visible_alias = "apn")]
+    parcel: Option<String>,
+}
+#[derive(Subcommand)]
+enum History {
+    From {
+        date: chrono::NaiveDate,
+        /// Exact quoted ETag returned by show.
+        #[arg(long)]
+        if_match: String,
+    },
+    All {
+        #[arg(long)]
+        if_match: String,
+    },
 }
 #[derive(Subcommand)]
 enum Tax {
@@ -304,6 +331,7 @@ async fn send<T: DeserializeOwned + Serialize>(request: RequestBuilder) -> Resul
             Some("if_match_required") => "if_match_required",
             Some("database_unavailable") => "database_unavailable",
             Some("capacity") => "capacity",
+            Some("county_unavailable") => "county_unavailable",
             _ if (300..400).contains(&status) => "redirect_refused",
             _ => "http_error",
         };
@@ -331,6 +359,30 @@ async fn run(cli: Cli) -> Result<(), Failure> {
         Command::Health => send::<Health>(api.request(Method::GET, "/health")?).await,
         Command::System => send::<System>(api.request(Method::GET, "/v1/system")?).await,
         Command::Show => send::<PropertyView>(api.request(Method::GET, "/v1/property")?).await,
+        Command::Resolve(input) => {
+            let input = match (input.address, input.parcel) {
+                (Some(address), None) => ResolveProperty::Address { address },
+                (None, Some(parcel)) => ResolveProperty::Parcel { parcel },
+                _ => return Err(Failure::local("invalid_input")),
+            };
+            send::<AddressCandidates>(
+                api.request(Method::POST, "/v1/property/resolve")?
+                    .json(&input),
+            )
+            .await
+        }
+        Command::History(history) => {
+            let (bought_on, if_match) = match history {
+                History::From { date, if_match } => (Some(date), if_match),
+                History::All { if_match } => (None, if_match),
+            };
+            send::<PropertyView>(
+                api.request(Method::PATCH, "/v1/property")?
+                    .header("If-Match", if_match)
+                    .json(&PropertyUpdate { bought_on }),
+            )
+            .await
+        }
         Command::Summary => send::<Reconciliation>(api.request(Method::GET, "/v1/summary")?).await,
         Command::Tax(Tax::Bills(Bills::List(page))) => {
             send::<Page<BillView>>(page.apply(api.request(Method::GET, "/v1/tax/bills")?)).await
