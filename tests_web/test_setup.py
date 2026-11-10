@@ -356,4 +356,4 @@ async def test_sync_display_is_bounded_and_never_calls_running_work_completed(
         )
     finally:
         release.set()
-        await page.unroute("**/v1/sync/*", delayed)
+        await page.unroute_all(behavior="wait")
