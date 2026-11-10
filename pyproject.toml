@@ -8,14 +8,14 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-  "gazetteer-matcher==1.1.0",
+  "gazetteer-matcher==1.2.0",
   "hassil==3.12.1",
   "home-assistant-intents==2026.10.27",
   "playwright==1.64.1",
   "pytest-homeassistant==2026.11.0",
-  "aiohasupervisor==0.8.1",
-  "ruff==0.17.3",
-  "ty==0.0.95",
+  "aiohasupervisor==0.10.0",
+  "ruff==0.17.4",
+  "ty==0.0.99",
 ]
 
 [tool.pytest.ini_options]
