@@ -454,6 +454,36 @@ pub fn reconcile(snapshot: &Snapshot, now: DateTime<Utc>) -> Reconciliation {
                         }
                         if linked {
                             evidence.push(observation.id.clone());
+                            // County history can identify a return separately
+                            // from the original posting. Preserve both records;
+                            // do not guess which older credit it reverses or
+                            // leave that credit closing this same installment.
+                            let later_county_zero = county_balance == Some(0)
+                                && balance.is_some_and(|balance| {
+                                    balance.evidence.effective_at
+                                        > observation.evidence.effective_at
+                                });
+                            if !later_county_zero {
+                                for posted in &selected_payments {
+                                    if posted.evidence.effective_at
+                                        > observation.evidence.effective_at
+                                    {
+                                        continue;
+                                    }
+                                    if let ObservationData::Payment(prior) = &posted.observation
+                                        && prior.status == PaymentStatus::CountyPosted
+                                        && prior.reference != payment.reference
+                                        && prior.allocations.iter().any(|allocation| {
+                                            allocation.bill == identity
+                                                && allocation.installment == installment.number
+                                        })
+                                    {
+                                        payment_conflict = true;
+                                        evidence.push(posted.id.clone());
+                                        break;
+                                    }
+                                }
+                            }
                             if conflicted_payments.contains(payment.reference.as_str())
                                 || observation.evidence.effective_at > now
                             {

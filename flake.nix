@@ -38,7 +38,7 @@
         cargoLock = {
           lockFile = ./Cargo.lock;
           outputHashes."sqlx-0.9.0" = "sha256-kLvUfUy6vmL9LYU7nzHv+iB6cIJm2CjDf9Yo6wpWrWg=";
-          outputHashes."ha-app-ui-0.1.0" = "sha256-NC2ZxquF1CNaXXJo5QOrw4GruBtxcKRpDpVVxmXMC4c=";
+          outputHashes."ha-app-ui-0.1.0" = "sha256-tgBPoIds8v3V1wzKon8uvMrWh01enQWDuBz7FwsYx20=";
         };
         cargoBuildFlags = ["--bin" "ha-property"];
         cargoTestFlags = ["--test" "cli"];

@@ -17,6 +17,7 @@ pub mod los_angeles;
 #[serde(rename_all = "snake_case")]
 pub enum CollectionMode {
     ManualImport,
+    HttpApi,
     HttpForm,
     BrowserWorker,
     Unsupported,
