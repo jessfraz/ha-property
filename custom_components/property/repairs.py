@@ -1,26 +1,28 @@
 """Use the native version repair for this Property entry."""
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
 
 from homeassistant.components.repairs import RepairsFlow
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 
 from ._app_kit.repairs import VersionRepairs, VersionRepairSpec, create_version_fix_flow
 from ._app_kit.version import LOADED_VERSION
 from ._app_kit.versions import ReleaseVersion
-from .const import CONF_ADDON_SLUG, DOMAIN
-
-if TYPE_CHECKING:
-    from .coordinator import PropertyCoordinator
+from .client import PropertyClient
+from .const import CONF_ADDON_SLUG, CONF_BACKEND_URL, CONF_TOKEN, DOMAIN
 
 
 async def _async_probe(hass: HomeAssistant, entry: ConfigEntry) -> ReleaseVersion:
-    coordinator: PropertyCoordinator = entry.runtime_data
-    response = await coordinator.client.request("GET", "/v1/system")
+    client = PropertyClient(
+        async_get_clientsession(hass),
+        entry.data[CONF_BACKEND_URL],
+        entry.data[CONF_TOKEN],
+    )
+    response = await client.request("GET", "/v1/system")
     if response.status != 200:
         raise HomeAssistantError("Property version is unavailable")
     data = response.json()
