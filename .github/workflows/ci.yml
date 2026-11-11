@@ -33,7 +33,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Install the Marketplace archive
         run: |
-          nix develop -c uv run --frozen python scripts/build-integration --output "$RUNNER_TEMP"
+          nix develop -c uv run --frozen python scripts/build-integration --check-brand property --output "$RUNNER_TEMP"
           mv custom_components/property "$RUNNER_TEMP/property-source"
           nix develop -c uv run --frozen python -m zipfile -e "$RUNNER_TEMP/property.zip" custom_components/property
       - run: nix develop -c just ha-installed
