@@ -51,7 +51,12 @@ async def test_version_repair_keeps_ledger_and_requires_fresh_parity(
         "/api/repairs/issues/fix", json={"handler": DOMAIN, "issue_id": issue_id}
     )
     assert result.status == 200
-    assert (await result.json())["reason"] == "managed_update_unavailable"
+    retry = await result.json()
+    assert retry["type"] == "form" and retry["step_id"] == "retry"
+    assert retry["errors"] == {"base": "managed_update_unavailable"}
+    closed = await client.delete(f"/api/repairs/issues/fix/{retry['flow_id']}")
+    assert closed.status == 200
+    assert registry.async_get_issue(DOMAIN, issue_id) is not None
     backend.responses["/v1/system"] = (503, b"", {})
     await observe_next_version()
     assert registry.async_get_issue(DOMAIN, issue_id) is not None
