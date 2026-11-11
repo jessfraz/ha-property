@@ -72,33 +72,45 @@
     "version_mismatch": {
       "title": "Property versions differ",
       "fix_flow": {
-        "step": {
-          "init": {
-            "title": "Match {app} versions",
-            "description": "The app is on {app_version} and Home Assistant loaded {integration_version}. Home Assistant will verify a protected backup before applying {target_version}.",
-            "menu_options": {
-              "update_and_restart": "Update and restart Home Assistant",
-              "update_app": "Update the app",
-              "restart": "Back up and restart Home Assistant"
-            }
-          }
+        "abort": {
+          "app_update_unavailable": "Update the app through Supervisor when a matching release becomes available.",
+          "matching_release_unavailable": "The Marketplace does not offer a matching integration release yet.",
+          "entry_unavailable": "The integration entry has changed or is unavailable. Reopen the repair after it loads.",
+          "managed_update_unavailable": "Home Assistant could not find the matching managed update entities. Check the app and Marketplace installations.",
+          "update_in_progress": "An update or another version repair is already running. Try again when it finishes.",
+          "backup_not_configured": "Configure an encryption password and backup locations in Settings > System > Backups.",
+          "backup_failed": "Home Assistant could not verify a complete encrypted backup at every selected location.",
+          "update_failed": "The update did not complete. Check the app and Marketplace updates before trying again.",
+          "verify_failed": "Home Assistant could not verify both installed versions. Check the current app and integration versions.",
+          "restart_failed": "Home Assistant could not restart. Reopen the repair to try again.",
+          "restart_pending": "Home Assistant is already preparing to restart.",
+          "restart_requested": "Home Assistant is restarting. The repair clears after the loaded integration verifies matching versions."
         },
         "progress": {
-          "updating": "Backing up and verifying the matching release."
+          "updating": "Creating and verifying the encrypted backup, then applying the selected changes."
         },
-        "abort": {
-          "app_update_unavailable": "The app does not offer a compatible managed update. Check Settings > Updates or update your standalone service.",
-          "matching_release_unavailable": "The update catalog does not offer a matching release yet. Refresh the updates and try again.",
-          "entry_unavailable": "The connection changed or is no longer loaded. Reopen the repair after the integration connects.",
-          "managed_update_unavailable": "Home Assistant could not find the update entities needed for this connection.",
-          "update_in_progress": "A backup or update is already running. Wait for it to finish before retrying.",
-          "backup_not_configured": "Select backup destinations and configure encryption in Settings > System > Backups.",
-          "backup_failed": "Home Assistant could not verify a complete, protected backup at every selected destination.",
-          "update_failed": "Home Assistant could not finish the update. Check Settings > Updates before retrying.",
-          "verify_failed": "Home Assistant could not verify the expected versions. Check the app and integration versions before retrying.",
-          "restart_failed": "Home Assistant could not restart. Check Settings > System and try again.",
-          "restart_pending": "Home Assistant is already restarting.",
-          "restart_requested": "Home Assistant is restarting. This repair clears when the integration reloads and verifies matching versions."
+        "step": {
+          "init": {
+            "title": "Match the app and integration versions",
+            "description": "{app} is on {app_version}. The loaded integration is on {integration_version}. This repair brings both to {target_version}. Home Assistant first verifies a full encrypted backup at every selected backup location.",
+            "menu_options": {
+              "update_and_restart": "Back up, update, and restart",
+              "update_app": "Back up and update the app",
+              "restart": "Back up and restart Home Assistant"
+            }
+          },
+          "retry": {
+            "title": "Check the version repair again",
+            "description": "Refresh the app and integration update information to find a matching release.",
+            "submit": "Retry version check"
+          }
+        },
+        "error": {
+          "app_update_unavailable": "Update the app through Supervisor when a matching release becomes available.",
+          "matching_release_unavailable": "The Marketplace does not offer a matching integration release yet.",
+          "managed_update_unavailable": "Home Assistant could not find the matching managed update entities. Check the app and Marketplace installations.",
+          "update_in_progress": "An update or another version repair is already running. Try again when it finishes.",
+          "verify_failed": "Home Assistant could not verify both installed versions. Check the current app and integration versions."
         }
       }
     },
