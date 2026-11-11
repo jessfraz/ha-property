@@ -9,6 +9,62 @@ from tests_web.fixtures import evidence_input
 from tests_web.test_app import login
 
 
+async def test_overview_for_two_referenced_bills_without_notices(
+    property_backend: PropertyBackend, page: Page
+) -> None:
+    data = evidence_input()
+    binding, observations = data["property"], data["observations"]
+    assert isinstance(binding, dict) and isinstance(observations, list)
+    binding["bought_on"] = "2024-06-30"
+    data["observations"] = [row for row in observations if row["id"] == "split-payment"]
+    await property_backend.seed(data)
+    await login(page, property_backend)
+
+    await expect(
+        page.get_by_role("heading", name="Overview", exact=True)
+    ).to_be_visible()
+    overview = page.locator("#overview-view")
+    await expect(
+        overview.get_by_text(
+            "No current county balance or installment dates are on file.", exact=True
+        )
+    ).to_have_count(1)
+    await expect(page.locator("#summary")).not_to_be_visible()
+    notices = overview.get_by_role("region", name="Missing notices", exact=True)
+    await expect(notices.get_by_role("listitem")).to_have_count(2)
+    await expect(notices.locator("li > span")).to_have_text(
+        ["FY 2030 · ANNUAL", "FY 2030 · SUPPLEMENTAL"]
+    )
+    county_bills = notices.get_by_role("link", name="View county bills")
+    await expect(county_bills).to_have_attribute(
+        "href", "https://ttc.lacounty.gov/request-duplicate-bill/"
+    )
+    await expect(
+        notices.get_by_role("button", name="Import notices", exact=True)
+    ).to_be_visible()
+    await expect(overview).not_to_contain_text("Partial")
+    await expect(overview).not_to_contain_text("$0.00")
+
+    await page.set_viewport_size({"width": 390, "height": 844})
+    await page.emulate_media(color_scheme="dark")
+    assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    target = await county_bills.bounding_box()
+    assert target is not None and target["height"] >= 44
+    await notices.get_by_role("button", name="View bill FY 2030 · SUPPLEMENTAL").click()
+    dialog = page.get_by_role("dialog", name="Bill awaiting notice")
+    await expect(dialog).to_contain_text("FY 2030 · SUPPLEMENTAL · version 1")
+    await expect(dialog).to_contain_text("Payment")
+    await expect(dialog).not_to_contain_text("Unknown")
+    await page.keyboard.press("Escape")
+
+    await overview.get_by_role("button", name="County coverage", exact=True).click()
+    await expect(page.get_by_role("heading", name="County coverage")).to_be_focused()
+    await expect(page.locator("#coverage article")).to_have_count(4)
+    await expect(page.locator("#coverage details[open]")).to_have_count(0)
+    bought_on = page.locator("#binding").get_by_label("Bought on (optional)")
+    await expect(bought_on).to_have_value("2024-06-30")
+
+
 def populated_history() -> dict[str, object]:
     """Several fictional years expose the repetition hidden by a tiny fixture."""
     data = evidence_input()
@@ -36,32 +92,21 @@ async def test_populated_ledger_groups_causes_without_losing_bill_actions(
 ) -> None:
     await property_backend.seed(populated_history())
     await login(page, property_backend)
-    groups = page.locator("#attention-items > .issue-group")
-    await expect(groups).to_have_count(3)
-    notices = groups.filter(
-        has=page.get_by_role("heading", name="6 bills need notices", exact=True)
-    )
-    await expect(
-        notices.get_by_role("button", name="View affected bill")
-    ).to_have_count(6)
+    notices = page.get_by_role("region", name="Missing notices", exact=True)
+    await expect(notices.get_by_role("button", name="View bill")).to_have_count(6)
     await expect(notices.locator("li > span")).to_have_text(
-        ["FY 2030 · MISSING · version 1"]
+        ["FY 2030 · MISSING"]
         + [f"FY {year} · MISSING" for year in range(2025, 2020, -1)]
     )
     await expect(notices).not_to_contain_text("Assessments without a notice:")
-    await expect(
-        page.get_by_role("button", name="View county coverage", exact=True)
-    ).to_have_count(1)
-    await expect(page.locator("#attention-items")).not_to_contain_text(
+    await expect(page.locator("#overview-items")).not_to_contain_text(
         "version unversioned"
     )
-    _, summary = await property_backend.request("GET", "/v1/summary")
-    await expect(page.locator("#summary")).to_contain_text(
-        str(summary["needs_attention"])
+    await expect(page.locator("#overview-note")).to_have_text(
+        "No current county balance is on file."
     )
-    await expect(page.locator("#summary")).to_contain_text("Unknown")
     row = notices.locator("li").filter(has_text="FY 2025")
-    await row.get_by_role("button", name="View affected bill").click()
+    await row.get_by_role("button", name="View bill").click()
     await expect(
         page.get_by_role("dialog", name="Bill awaiting notice")
     ).to_contain_text("FY 2025 · MISSING")
@@ -91,13 +136,46 @@ async def test_partial_balance_coverage_does_not_erase_a_known_imported_balance(
     await property_backend.seed(evidence_input())
     await login(page, property_backend)
     await expect(page.locator("#summary")).to_contain_text("$900.00")
+    await expect(page.locator("#overview-note")).not_to_be_visible()
+    await expect(page.locator("#overview-items")).not_to_contain_text("Balances")
+    await page.get_by_role("button", name="Property", exact=True).click()
+    balance = page.locator("#coverage article").filter(
+        has=page.get_by_role("heading", name="Balances", exact=True)
+    )
+    await expect(balance).to_contain_text("Partial")
+
+
+async def test_overview_keeps_conflicting_balances_and_deadlines_visible(
+    property_backend: PropertyBackend, page: Page
+) -> None:
+    data = evidence_input()
+    observations = data["observations"]
+    assert isinstance(observations, list)
+    balance = deepcopy(
+        next(row for row in observations if row["id"] == "property-balance")
+    )
+    balance["id"] = "fictional-conflicting-balance"
+    balance["observation"]["data"]["amount_cents"] = 91000
+    observations.append(balance)
+    await property_backend.seed(data)
+    await login(page, property_backend)
+
+    overview = page.locator("#overview-view")
     await expect(
-        page.get_by_role("heading", name="County balance not confirmed", exact=True)
-    ).to_have_count(0)
-    await expect(page.locator("#attention-items")).to_contain_text("Balances: Partial")
+        overview.get_by_role("heading", name="County balances disagree", exact=True)
+    ).to_be_visible()
+    await expect(overview).not_to_contain_text("$900.00")
+    await expect(overview).not_to_contain_text("$910.00")
+    await expect(overview.locator("#overview-note")).to_have_text(
+        "No current county balance is on file."
+    )
+    deadlines = overview.get_by_role("region", name="Installment deadlines")
+    await expect(deadlines.locator("article")).to_have_count(2)
+    await expect(deadlines).to_contain_text("Feb 1, 2031")
+    await expect(deadlines).not_to_contain_text("Unpaid estimate")
 
 
-async def test_attention_shows_open_installments_once_and_keeps_history_on_bills(
+async def test_overview_shows_open_installments_once_and_keeps_history_on_bills(
     property_backend: PropertyBackend, page: Page
 ) -> None:
     await property_backend.seed(evidence_input())

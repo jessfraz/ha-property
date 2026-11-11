@@ -183,7 +183,9 @@ async def test_county_candidates_require_explicit_selection_review_and_real_appl
     await expect(page.locator("#property-setup")).not_to_be_visible()
     await expect(page.locator("#notice")).to_contain_text("Property confirmed")
     await expect(page.locator("#binding")).to_be_focused()
-    await expect(page.locator("#summary")).to_contain_text("Unknown")
+    await expect(page.locator("#overview-note")).to_have_text(
+        "No current county balance or installment dates are on file."
+    )
     await expect(page.locator("#summary")).not_to_contain_text("$0.00")
     _, state = await property_backend.request("GET", "/v1/property")
     binding = state["property"]

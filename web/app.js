@@ -190,9 +190,9 @@ function label(value) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-/** @param {{fiscal_year:number,sequence:string,source_version:string}} identity */
-function identityLabel(identity) {
-  return `FY ${identity.fiscal_year} · ${identity.sequence}${identity.source_version === 'unversioned' ? '' : ` · version ${identity.source_version}`}`;
+/** @param {{fiscal_year:number,sequence:string,source_version:string}} identity @param {boolean} [showVersion] */
+function identityLabel(identity, showVersion = true) {
+  return `FY ${identity.fiscal_year} · ${identity.sequence}${!showVersion || identity.source_version === 'unversioned' ? '' : ` · version ${identity.source_version}`}`;
 }
 
 /** @param {object} first @param {object} second */
@@ -232,131 +232,121 @@ function tag(text, kind = '') {
 function render() {
   const { summary, property } = current;
   element('property-label').textContent = property.property?.label ?? 'Tax ledger';
-  element('snapshot-status').textContent = summary.last_observed_at ? `Last evidence ${date(summary.last_observed_at)}` : 'No evidence yet';
-  const unpaid = [...summary.installments].filter(item => item.state !== 'paid')
-    .sort((a, b) => a.due_date.localeCompare(b.due_date));
-  const next = unpaid[0];
-  const nextCount = next ? unpaid.filter(item => item.due_date === next.due_date).length : 0;
-  element('summary').replaceChildren(
-    metric('Latest property balance', money(summary.known_balance_cents), summary.latest_balance
-      ? `Observed ${date(summary.latest_balance.evidence.observed_at)}` : 'No property-wide county balance'),
-    metric('Next unpaid installment', next ? date(next.due_date) : 'Unknown', next
-      ? `${nextCount > 1 ? `${nextCount} installments due` : `${identityLabel(next.identity)} · installment ${next.number}`} · ${next.timezone}` : 'No confirmed open deadline'),
-    metric('Needs attention', String(summary.needs_attention), `${unpaid.length} open installments · ${summary.needs_attention - unpaid.length} evidence flags`),
-  );
-  renderAttention();
+  element('snapshot-status').textContent = summary.last_observed_at
+    ? 'Last evidence ' + date(summary.last_observed_at) : 'No evidence yet';
+  renderOverview();
+  updateImportEmphasis();
   renderBills();
   renderAssessments();
   renderPayments();
   renderProperty();
-  element('summary').hidden = !property.property || element('attention-view').hidden;
 }
 
-function renderAttention() {
-  const host = element('attention-items');
+const sourceIssues = new Set([
+  'assessment_without_notice', 'coverage_gap', 'coverage_incomplete', 'coverage_unknown',
+  'missing_notice', 'property_unconfigured', 'unknown_balance', 'unknown_property_balance',
+]);
+
+function renderOverview() {
   const { summary, property } = current;
+  const metrics = element('summary');
+  const gap = element('overview-gap');
+  const note = element('overview-note');
+  const host = element('overview-items');
+  metrics.replaceChildren();
   host.replaceChildren();
+  metrics.hidden = true;
+  gap.hidden = true;
+
   if (!property.property) {
     const box = empty(host, 'Add a property', 'Find your county parcel and confirm the match to start the ledger.');
-    const button = node('button', 'Find county parcel');
-    button.type = 'button';
-    button.addEventListener('click', openSetup);
-    if (canWrite) box.append(button);
-  } else if (summary.needs_attention === 0) {
-    empty(host, 'Nothing needs attention', summary.last_observed_at ? `Evidence through ${date(summary.last_observed_at)}.` : 'No evidence has been imported yet.');
+    if (canWrite) {
+      const button = node('button', 'Find county parcel');
+      button.type = 'button';
+      button.addEventListener('click', openSetup);
+      box.append(button);
+    }
+    return;
   }
-  for (const installment of summary.installments.filter(item => item.state !== 'paid')) host.append(installmentCard(installment));
-  if (property.property) renderAttentionGroups(host);
-  const installments = element('installments');
-  installments.replaceChildren(...summary.installments.map(installmentCard));
-  element('deadline-section').hidden = !summary.installments.length;
+
+  const hasBalance = summary.known_balance_cents != null;
+  const hasDates = summary.installments.length > 0;
+  const unpaid = summary.installments.filter(item => item.state !== 'paid')
+    .sort((a, b) => a.due_date.localeCompare(b.due_date));
+  if (hasBalance) {
+    metrics.append(metric('County balance', money(summary.known_balance_cents),
+      'Observed ' + date(summary.latest_balance.evidence.observed_at)));
+  }
+  if (unpaid.length) {
+    const next = unpaid[0];
+    const count = unpaid.filter(item => item.due_date === next.due_date).length;
+    const label = count > 1 ? count + ' installments due' : identityLabel(next.identity) + ' · installment ' + next.number;
+    metrics.append(metric('Next unpaid installment', date(next.due_date), label + ' · ' + next.timezone));
+  }
+  metrics.hidden = !metrics.childElementCount;
+  if (!hasBalance || !hasDates) {
+    note.textContent = !hasBalance && !hasDates
+      ? 'No current county balance or installment dates are on file.'
+      : !hasBalance ? 'No current county balance is on file.' : 'No installment dates are on file.';
+    gap.hidden = false;
+  }
+
+  for (const issue of summary.issues) {
+    if (!sourceIssues.has(issue.code) && issue.scope?.kind !== 'installment') {
+      host.append(issueCard(issue, true));
+    }
+  }
+  if (unpaid.length) {
+    const deadlines = node('section', '', 'stack overview-deadlines');
+    const title = node('h2', 'Installment deadlines');
+    title.id = 'overview-deadlines-title';
+    deadlines.setAttribute('aria-labelledby', title.id);
+    deadlines.append(title, ...unpaid.map(item => installmentCard(item, false)));
+    host.append(deadlines);
+  }
+  const missing = summary.bills.filter(bill => bill.missing_notice && !bill.superseded)
+    .sort(compareBills);
+  if (missing.length) host.append(missingNotices(missing, property.property.key.jurisdiction));
 }
 
-/** @param {HTMLElement} host */
-function renderAttentionGroups(host) {
-  const groups = new Map();
-  const unknownBalance = current.summary.issues.some(issue => issue.code === 'unknown_property_balance');
-  for (const issue of current.summary.issues) {
-    if (issue.code === 'unknown_balance') continue;
-    let cause = issue.code;
-    if (['missing_notice', 'assessment_without_notice'].includes(cause)
-        || cause === 'coverage_gap' && issue.scope?.capability === 'notices') cause = 'notices';
-    else if (cause === 'unknown_property_balance'
-        || cause === 'coverage_gap' && issue.scope?.capability === 'balances' && unknownBalance) cause = 'balance';
-    else if (['coverage_gap', 'coverage_incomplete', 'coverage_unknown'].includes(cause)) cause = 'coverage';
-    const issues = groups.get(cause) ?? [];
-    issues.push(issue);
-    groups.set(cause, issues);
+/** @param {object} a @param {object} b */
+function compareBills(a, b) {
+  return b.identity.fiscal_year - a.identity.fiscal_year
+    || a.identity.sequence.localeCompare(b.identity.sequence);
+}
+
+/** @param {object[]} bills @param {string} jurisdiction */
+function missingNotices(bills, jurisdiction) {
+  const card = node('section', '', 'panel missing-notices');
+  const title = node('h2', 'Missing notices');
+  title.id = 'missing-notices-title';
+  card.setAttribute('aria-labelledby', title.id);
+  const rows = node('ul', '', 'notice-bills');
+  rows.setAttribute('role', 'list');
+  const references = new Map();
+  for (const bill of bills) {
+    const reference = identityLabel(bill.identity, false);
+    references.set(reference, (references.get(reference) ?? 0) + 1);
   }
-  // Keep contradictory or overdue evidence prominent; collection limits follow
-  // the concrete records and user actions they affect.
-  const rank = cause => ['balance_conflict', 'balance_outdated', 'balance', 'notices', 'coverage'].indexOf(cause);
-  const ordered = [...groups.entries()].sort(([a], [b]) => {
-    const first = rank(a), second = rank(b);
-    return (first < 0 ? 0 : first + 1) - (second < 0 ? 0 : second + 1);
-  });
-  for (const [cause, issues] of ordered) {
-    const card = node('article', '', 'record issue issue-group');
-    const heading = node('div', '', 'record-heading');
-    const billIssues = issues.filter(issue => issue.scope?.kind === 'bill');
-    let title;
-    let description;
-    if (cause === 'notices') {
-      title = billIssues.length ? `${billIssues.length} ${billIssues.length === 1 ? 'bill needs a notice' : 'bills need notices'}` : 'Assessment notices needed';
-      description = 'County records reference these tax years, but the notices are not on file.';
-    } else if (cause === 'balance') {
-      title = 'County balance not confirmed';
-      description = 'The current property-wide balance is unknown. Check the county viewer or import a recent balance.';
-    } else if (cause === 'coverage') {
-      title = 'County coverage is limited';
-      description = 'Some sources have a limited history or could not be checked.';
-    } else {
-      title = label(cause);
-      description = issues[0].message;
-    }
-    heading.append(node('h3', title));
-    card.append(heading, node('p', description));
-    const rows = node('ul', '', 'issue-records');
-    for (const issue of [...billIssues].sort((a, b) => b.scope.bill.fiscal_year - a.scope.bill.fiscal_year || a.scope.bill.sequence.localeCompare(b.scope.bill.sequence))) {
-      const bill = current.summary.bills.find(item => sameBill(item.identity, issue.scope.bill));
-      const row = node('li');
-      row.append(node('span', identityLabel(issue.scope.bill)));
-      if (bill) row.append(viewButton('View', () => openBill(bill), `View affected bill ${identityLabel(bill.identity)}`));
-      rows.append(row);
-    }
-    if (rows.children.length) card.append(rows);
-    const assessmentIssues = issues.filter(issue => issue.code === 'assessment_without_notice');
-    if (assessmentIssues.length) {
-      const years = [...new Set(current.assessments.map(item => item.observation.data.fiscal_year))]
-        .filter(year => !billIssues.some(issue => issue.scope.bill.fiscal_year === year)
-          && !current.summary.bills.some(bill => bill.identity.fiscal_year === year && !bill.superseded && !bill.missing_notice))
-        .sort((a, b) => b - a);
-      if (years.length) card.append(node('p', `Assessments without a notice: ${years.map(year => `FY ${year}`).join(', ')}.`, 'record-meta'));
-    }
-    const sources = issues.filter(issue => issue.scope?.kind === 'capability');
-    if (sources.length) {
-      card.append(node('p', sources.map(issue => {
-        const coverage = current.summary.coverage.find(item => item.capability === issue.scope.capability);
-        return `${label(issue.scope.capability)}: ${coverage ? label(coverage.status) : 'Unknown'}`;
-      }).join(' · '), 'record-meta'));
-    }
-    const actions = node('div', '', 'actions');
-    if (canWrite && ['notices', 'balance'].includes(cause)) actions.append(viewButton(cause === 'notices' ? 'Import notices' : 'Import balance', openImport));
-    if (cause === 'notices' && assessmentIssues.length) actions.append(viewButton('View assessments', () => selectView('assessments')));
-    if (!['notices', 'balance', 'coverage'].includes(cause)) {
-      const detail = node('details');
-      detail.append(node('summary', 'Affected evidence'));
-      for (const issue of issues) detail.append(issueCard(issue, true));
-      card.append(detail);
-    }
-    if (actions.children.length) card.append(actions);
-    host.append(card);
+  for (const bill of bills) {
+    const row = node('li');
+    const reference = identityLabel(bill.identity, references.get(identityLabel(bill.identity, false)) > 1);
+    row.append(node('span', reference), viewButton('View bill', () => openBill(bill), 'View bill ' + reference));
+    rows.append(row);
   }
-  if (current.summary.coverage.length) host.append(viewButton('View county coverage', () => {
-    selectView('property');
-    element('sources-title').setAttribute('tabindex', '-1');
-    element('sources-title').focus();
-  }));
+  card.append(title, node('p', 'Find the notices to verify the amounts and due dates.', 'muted'), rows);
+  const actions = node('div', '', 'actions');
+  if (jurisdiction === '06037') {
+    const link = node('a', 'View county bills ↗', 'county-link');
+    link.href = 'https://ttc.lacounty.gov/request-duplicate-bill/';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.setAttribute('aria-label', 'View county bills (opens in a new tab)');
+    actions.append(link);
+  }
+  if (canWrite) actions.append(viewButton('Import notices', openImport));
+  if (actions.childElementCount) card.append(actions);
+  return card;
 }
 
 /** @param {string} title @param {() => void} action @param {string} [accessibleLabel] */
@@ -371,7 +361,16 @@ function viewButton(title, action, accessibleLabel) {
 /** @param {{code:string,message:string,observation_ids:string[],scope?:object}} issue @param {boolean} [actions] */
 function issueCard(issue, actions = false) {
   const card = node('article', '', 'record issue');
-  card.append(node('h3', label(issue.code)), node('p', issue.message));
+  const titles = {
+    balance_conflict: 'County balances disagree',
+    balance_outdated: 'County balance needs a refresh',
+    conflicting_supersession: 'Bill replacements disagree',
+    notice_conflict: 'Bill notices disagree',
+    payment_conflict: 'Payment records disagree',
+    payment_returned: 'Payment was reversed or refunded',
+    unallocated_payment: 'Payment needs an allocation',
+  };
+  card.append(node('h3', titles[issue.code] ?? label(issue.code)), node('p', issue.message));
   const scope = issue.scope;
   if (scope?.kind === 'bill' || scope?.kind === 'installment') {
     card.append(node('p', `${identityLabel(scope.bill)}${scope.kind === 'installment' ? ` · installment ${scope.number}` : ''}`, 'record-meta'));
@@ -401,18 +400,19 @@ function issueCard(issue, actions = false) {
   return card;
 }
 
-/** @param {object} installment */
-function installmentCard(installment) {
+/** @param {object} installment @param {boolean} [showEstimate] */
+function installmentCard(installment, showEstimate = true) {
   const card = node('article', '', 'record');
   const heading = node('div', '', 'record-heading');
   const text = node('div');
   text.append(node('h3', `Installment ${installment.number}`), node('p', identityLabel(installment.identity), 'muted'));
   heading.append(text, tag(label(installment.state), installment.state === 'paid' ? 'ok' : installment.state === 'contradiction' || installment.state === 'delinquent' ? 'warning' : ''));
   card.append(heading);
+  const amounts = [['Billed', money(installment.amount_cents)]];
+  if (installment.county_balance_cents != null) amounts.push(['County balance', money(installment.county_balance_cents)]);
+  if (showEstimate && installment.estimated_remaining_cents != null) amounts.push(['Unpaid estimate', money(installment.estimated_remaining_cents)]);
   facts(card, [
-    ['Billed', money(installment.amount_cents)],
-    ['County balance', money(installment.county_balance_cents)],
-    ['Unpaid estimate', money(installment.estimated_remaining_cents)],
+    ...amounts,
     ['Due', date(installment.due_date)],
     ['Delinquent after', `${date(installment.delinquent_at, true, installment.timezone)} · ${installment.timezone}`],
   ]);
@@ -422,29 +422,35 @@ function installmentCard(installment) {
 
 function renderBills() {
   const host = element('bills');
-  const bills = [...current.summary.bills].sort((a, b) => b.identity.fiscal_year - a.identity.fiscal_year || a.identity.sequence.localeCompare(b.identity.sequence));
+  const { bills, installments } = current.summary;
   host.replaceChildren();
   if (!bills.length) empty(host, 'No bills on file', 'Import a notice to see its balance and installments.');
   let year = null;
   let group;
-  for (const bill of bills) {
+  for (const bill of [...bills].sort(compareBills)) {
     if (year !== bill.identity.fiscal_year) {
       year = bill.identity.fiscal_year;
       group = node('section', '', 'bill-year stack');
       group.append(node('h2', `FY ${year}`));
       host.append(group);
     }
-    const card = node('article', '', `record bill-row${bill.missing_notice ? ' unknown' : ''}`);
+    const card = node('article', '', 'record bill-row');
     const heading = node('div', '', 'record-heading');
     const title = node('div');
     title.append(node('h3', bill.bill_kind ? `${label(bill.bill_kind)} bill` : 'Bill awaiting notice'), node('p', identityLabel(bill.identity), 'muted'));
-    heading.append(title, tag(bill.superseded ? 'Superseded' : bill.missing_notice ? 'Missing notice' : 'Notice received', bill.missing_notice ? 'warning' : ''));
+    heading.append(title);
+    if (bill.superseded) heading.append(tag('Superseded'));
     card.append(heading);
     const balance = bill.latest_balance;
-    const balanceLine = node('p', '', 'bill-balance');
-    balanceLine.append(node('span', 'Bill balance', 'muted'), node('strong', balance ? money(balance.observation.data.amount_cents) : 'Unknown'));
-    if (balance) balanceLine.append(node('span', `Observed ${date(balance.evidence.observed_at)}`, 'muted'));
-    card.append(balanceLine);
+    if (balance?.observation.data.amount_cents != null) {
+      const balanceLine = node('p', '', 'bill-balance');
+      balanceLine.append(
+        node('span', 'Observed bill balance', 'muted'),
+        node('strong', money(balance.observation.data.amount_cents)),
+        node('span', date(balance.evidence.observed_at), 'muted'),
+      );
+      card.append(balanceLine);
+    }
     const actions = node('div', '', 'actions');
     const detail = node('button', 'View bill', 'quiet');
     detail.type = 'button';
@@ -454,6 +460,8 @@ function renderBills() {
     card.append(actions);
     group.append(card);
   }
+  element('installments').replaceChildren(...installments.map(item => installmentCard(item)));
+  element('deadline-section').hidden = !installments.length;
 }
 
 /** @param {object} evidence @param {string} [kind] */
@@ -484,14 +492,16 @@ function openBill(bill) {
   element('bill-title').textContent = bill.bill_kind ? `${label(bill.bill_kind)} bill` : 'Bill awaiting notice';
   host.replaceChildren(node('p', identityLabel(bill.identity), 'muted'));
   if (bill.superseded) host.append(node('p', 'This version is superseded. Its evidence remains in the ledger; use the active adjusted version for current installments.', 'notice'));
-  if (bill.missing_notice) host.append(node('p', 'The notice is missing. A payment or balance reference does not establish the full bill or its remaining installments.', 'notice'));
+  if (bill.missing_notice) host.append(node('p', 'The notice is needed to verify the full amount and due dates.', 'muted'));
   for (const installment of bill.installments) host.append(installmentCard(installment));
-  for (const issue of bill.issues) host.append(issueCard(issue));
+  for (const issue of bill.issues.filter(item => !['missing_notice', 'unknown_balance'].includes(item.code))) {
+    host.append(issueCard(issue));
+  }
   const evidence = node('section', '', 'section');
   evidence.append(node('h3', 'Evidence'));
   const list = node('ul', '', 'evidence-list');
   if (bill.notice) list.append(evidenceItem(bill.notice.evidence, 'Notice'));
-  if (bill.latest_balance) list.append(evidenceItem(bill.latest_balance.evidence, 'Bill balance'));
+  if (bill.latest_balance) list.append(evidenceItem(bill.latest_balance.evidence, 'Balance observation'));
   for (const observation of current.payments) {
     if (observation.observation.data.allocations.some(allocation => sameBill(allocation.bill, bill.identity))) {
       const payment = observation.observation.data;
@@ -503,9 +513,10 @@ function openBill(bill) {
       list.append(item);
     }
   }
-  if (!list.children.length) list.append(node('li', 'No notice or scoped balance evidence is available.'));
-  evidence.append(list);
-  host.append(evidence);
+  if (list.childElementCount) {
+    evidence.append(list);
+    host.append(evidence);
+  }
   dialog.showModal();
 }
 
@@ -568,12 +579,23 @@ function renderProperty() {
   }
   element('property-setup').hidden = Boolean(property) || !canWrite;
   const coverage = element('coverage');
+  const { issues } = current.summary;
   coverage.replaceChildren();
   if (!current.summary.coverage.length) empty(coverage, 'County sources not checked', 'Check the county source to collect available records.');
+  if (issues.some(issue => issue.code === 'coverage_incomplete')) {
+    coverage.append(node('p', 'Some county sources have no recorded check.', 'muted'));
+  }
+  if (issues.some(issue => issue.code === 'assessment_without_notice')) {
+    coverage.append(node('p', 'Some assessment years have no bill notice on file.', 'muted'));
+  }
   for (const item of current.summary.coverage) {
     const card = node('article', '', 'record');
     const heading = node('div', '', 'record-heading');
-    heading.append(node('h3', label(item.capability)), tag(label(item.status), item.status === 'complete' ? 'ok' : item.status === 'partial' ? '' : 'warning'));
+    const recheck = item.status === 'complete' && issues.some(issue =>
+      issue.code === 'coverage_gap' && issue.scope?.capability === item.capability);
+    heading.append(node('h3', label(item.capability)),
+      tag(recheck ? 'Needs recheck' : label(item.status),
+        item.status === 'complete' && !recheck ? 'ok' : item.status === 'partial' ? '' : 'warning'));
     const details = node('details');
     details.append(node('summary', 'Source details'), node('p', item.detail));
     card.append(heading, node('p', `Checked ${date(item.checked_at, true)}`, 'record-meta'), details);
@@ -626,12 +648,16 @@ function countyToday() {
 
 /** @param {string} view */
 function selectView(view) {
-  const titles = { attention: 'Needs attention', bills: 'Bills', assessments: 'Assessments', property: 'Property' };
+  const titles = { overview: 'Overview', bills: 'Bills', assessments: 'Assessments', property: 'Property' };
   if (!Object.hasOwn(titles, view)) return;
   for (const button of document.querySelectorAll('[data-view]')) button.setAttribute('aria-pressed', String(button.dataset.view === view));
   for (const name of Object.keys(titles)) element(`${name}-view`).hidden = name !== view;
   element('view-title').textContent = titles[view];
-  element('summary').hidden = view !== 'attention' || !current?.property.property;
+  updateImportEmphasis();
+}
+
+function updateImportEmphasis() {
+  importButton.classList.toggle('quiet', !element('overview-view').hidden && Boolean(document.getElementById('missing-notices-title')));
 }
 
 function openImport() {
@@ -642,7 +668,7 @@ function openImport() {
 function openSetup() {
   if (!canWrite || current?.property.property) return;
   selectView('property');
-  element('setup-address').focus();
+  element(element('setup-parcel-field').hidden ? 'setup-address' : 'setup-parcel').focus();
 }
 
 function clearPropertyPreview() {
@@ -1107,6 +1133,12 @@ element('login').addEventListener('submit', event => {
 });
 refreshButton.addEventListener('click', refresh);
 importButton.addEventListener('click', openImport);
+element('overview-coverage').addEventListener('click', () => {
+  selectView('property');
+  const title = element('sources-title');
+  title.tabIndex = -1;
+  title.focus();
+});
 for (const button of document.querySelectorAll('[data-view]')) button.addEventListener('click', () => selectView(button.dataset.view));
 element('close-bill').addEventListener('click', () => element('bill-detail').close());
 element('close-import').addEventListener('click', () => element('import-dialog').close());

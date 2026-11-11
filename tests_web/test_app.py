@@ -44,7 +44,7 @@ async def test_empty_setup_then_reviewed_import_updates_all_views(
     await expect(
         page.get_by_role("heading", name="Add a property", exact=True)
     ).to_be_visible()
-    await expect(page.locator("#summary")).to_contain_text("Unknown")
+    await expect(page.locator("#summary")).not_to_be_visible()
     await paste_import(page, evidence_input())
     preview = page.locator("#import-preview")
     await expect(preview).to_be_visible()
@@ -63,24 +63,24 @@ async def test_empty_setup_then_reviewed_import_updates_all_views(
     await expect(page.locator("#property-label")).to_have_text("Example property")
     await expect(page.locator("#summary")).to_contain_text("$900.00")
     await expect(page.locator("#summary")).to_contain_text("2 installments due")
-    await expect(page.locator("#attention-items > article")).to_have_count(4)
-    missing = page.locator("#attention-items > article").filter(
-        has=page.get_by_role("heading", name="1 bill needs a notice", exact=True)
-    )
-    await expect(missing).to_contain_text("FY 2030 · MISSING · version 1")
-    for capability in ("Notices", "Assessments", "Balances", "Payments"):
-        await expect(page.locator("#attention-items")).to_contain_text(
-            capability + ": Partial"
-        )
-    await missing.get_by_role("button", name="View affected bill").click()
+    await expect(
+        page.get_by_role("region", name="Installment deadlines").locator("article")
+    ).to_have_count(2)
+    missing = page.get_by_role("region", name="Missing notices", exact=True)
+    await expect(missing).to_contain_text("FY 2030 · MISSING")
+    await missing.get_by_role("button", name="View bill").click()
     await expect(
         page.get_by_role("dialog", name="Bill awaiting notice")
     ).to_contain_text("FY 2030 · MISSING · version 1")
     await page.keyboard.press("Escape")
-    await page.get_by_role("button", name="View county coverage").first.click()
+    await page.get_by_role("button", name="Property", exact=True).click()
     await expect(page.locator("#property-view")).to_be_visible()
-    await expect(page.locator("#sources-title")).to_be_focused()
-    await page.get_by_role("button", name="Needs attention", exact=True).click()
+    for capability in ("Notices", "Assessments", "Balances", "Payments"):
+        source = page.locator("#coverage article").filter(
+            has=page.get_by_role("heading", name=capability, exact=True)
+        )
+        await expect(source).to_contain_text("Partial")
+    await page.get_by_role("button", name="Overview", exact=True).click()
     await expect(page.locator("#deadline-section")).not_to_be_visible()
     await page.get_by_role("button", name="Bills", exact=True).click()
     await expect(page.locator("#installments article")).to_have_count(4)
@@ -90,7 +90,7 @@ async def test_empty_setup_then_reviewed_import_updates_all_views(
     await expect(second).to_have_count(2)
     for card in await second.all():
         await expect(card).not_to_contain_text("Paid")
-        await expect(card).to_contain_text("Unknown")
+        await expect(card).not_to_contain_text("County balance")
     await expect(page.locator("#bills article")).to_have_count(3)
     await expect(
         page.get_by_role("heading", name="Bill awaiting notice", exact=True)
@@ -195,19 +195,20 @@ async def test_unknown_balance_and_missing_notice_are_not_zero_or_paid(
     ]
     await property_backend.seed(evidence)
     await login(page, property_backend)
-    balance = page.locator(".metric").filter(has_text="Latest property balance")
-    await expect(balance).to_contain_text("Unknown")
-    await expect(balance).not_to_contain_text("$0.00")
+    await expect(page.locator("#overview-note")).to_have_text(
+        "No current county balance is on file."
+    )
+    await expect(page.locator("#summary")).not_to_contain_text("$0.00")
     await page.get_by_role("button", name="Bills", exact=True).click()
     await expect(
-        page.locator("#bills").get_by_text("Missing notice", exact=True)
+        page.locator("#bills").get_by_role("heading", name="Bill awaiting notice")
     ).to_have_count(2)
     await page.get_by_role(
         "button", name="View bill FY 2030 · ANNUAL · version 1"
     ).click()
     await expect(
         page.get_by_role("dialog", name="Bill awaiting notice")
-    ).to_contain_text("does not establish the full bill")
+    ).to_contain_text("verify the full amount and due dates")
 
 
 @pytest.mark.parametrize(
