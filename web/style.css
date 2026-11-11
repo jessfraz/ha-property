@@ -10,7 +10,7 @@ p { line-height: 1.55; }
 .page-heading { margin-bottom: 24px; }
 .page-heading > p { margin: 0; font-size: 12px; text-align: right; }
 .section-heading h2 { margin-bottom: 0; }
-.summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 28px; }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; margin-bottom: 20px; }
 .metric, .panel, .record { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); padding: 20px; min-width: 0; }
 .metric { display: grid; align-content: start; gap: 8px; }
 .metric-label { margin: 0; color: var(--muted); font-size: 12px; }
@@ -34,7 +34,6 @@ p { line-height: 1.55; }
 .issue { border-left: 3px solid var(--warning); }
 .issue p { margin: 0; }
 .issue h3 { margin-bottom: 6px; }
-.record.unknown { border-style: dashed; }
 .empty { color: var(--muted); line-height: 1.55; }
 .empty h2, .empty h3 { color: var(--ink); }
 .empty p { margin: 6px 0 16px; }
@@ -80,18 +79,24 @@ summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .preview-summary p { margin: 4px 0; }
 .preview-summary .mono { overflow-wrap: anywhere; font-size: 11px; }
 .issue button { margin-top: 12px; }
-.issue-group > p { margin-top: 8px; }
-.issue-records { list-style: none; padding: 0; margin: 14px 0; }
-.issue-records li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-.issue-records li:last-child { border-bottom: 0; }
-.issue-records button { margin: 0; white-space: nowrap; }
+.overview-gap { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 16px; margin-bottom: 16px; font-size: 14px; }
+.overview-gap p { margin: 0; }
+.overview-gap button.quiet { border-color: transparent; padding-inline: 0; text-decoration: underline; text-underline-offset: 3px; }
+.overview-deadlines > h2, .missing-notices > h2 { margin: 0; }
+.missing-notices > p { margin: 6px 0 12px; }
+.notice-bills { list-style: none; padding: 0; margin: 12px 0; }
+.notice-bills li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.notice-bills li:last-child { border-bottom: 0; }
+.notice-bills button.quiet { flex: none; border-color: transparent; padding-inline: 10px; white-space: nowrap; }
+.missing-notices .actions { gap: 8px 16px; }
+.county-link { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 16px; border-radius: 6px; background: var(--accent); color: var(--on-accent); font-size: 14px; font-weight: 550; text-decoration: none; }
+.county-link:hover { opacity: .88; }
 .bill-year { gap: 8px; }
 .bill-year + .bill-year { margin-top: 16px; }
 .bill-year h2 { margin-bottom: 4px; }
 .bill-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 20px; padding: 16px; }
-.bill-row .record-heading { grid-column: 1 / -1; }
-.bill-row .bill-balance { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 0; font-size: 13px; }
-.bill-row .actions { margin: 0; }
+.bill-row .bill-balance { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 0; font-size: 13px; }
+.bill-row .actions { grid-column: 2; grid-row: 1; justify-self: end; margin: 0; }
 .property-date { margin-top: 24px; }
 .property-date input { display: block; max-width: 240px; margin-top: 8px; }
 .property-date button { margin-top: 8px; }
@@ -113,6 +118,6 @@ summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
   dl { grid-template-columns: minmax(88px, .5fr) minmax(0, 1fr); gap: 8px 12px; }
   .view-switch { flex-wrap: nowrap; overflow-x: auto; gap: 4px; }
   .view-switch button { flex: 0 0 auto; padding-inline: 8px; font-size: 12px; }
-  .issue-records li { align-items: flex-start; }
   .bill-row { grid-template-columns: 1fr; }
+  .bill-row .actions { grid-column: 1; grid-row: auto; justify-self: start; }
 }
