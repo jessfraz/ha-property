@@ -91,7 +91,9 @@ summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .notice-bills button.quiet { flex: none; border-color: transparent; padding-inline: 10px; white-space: nowrap; }
 .missing-notices .actions { gap: 8px 16px; }
 .county-link { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 16px; border-radius: var(--control-radius); background: var(--accent); color: var(--on-accent); font-size: 14px; font-weight: 550; text-decoration: none; }
-.county-link:hover { opacity: .88; }
+@media (hover: hover) and (pointer: fine) {
+  .county-link:hover { background-image: linear-gradient(rgb(127 127 127 / .08), rgb(127 127 127 / .08)); }
+}
 .bill-year { gap: 8px; }
 .bill-year + .bill-year { margin-top: 16px; }
 .bill-year h2 { margin-bottom: 4px; }
