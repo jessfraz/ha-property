@@ -1,6 +1,6 @@
 [package]
 name = "property"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2024"
 license = "MIT"
 description = "An evidence-backed property tax ledger for Home Assistant"
@@ -21,8 +21,8 @@ dropshot = "0.18"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = { version = "0.10", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
-ha-app-ui = { git = "https://github.com/jessfraz/ha-app-kit", tag = "v0.1.7" }
-ha-app-kit-ha = { git = "https://github.com/jessfraz/ha-app-kit", tag = "v0.1.7" }
+ha-app-ui = { git = "https://github.com/jessfraz/ha-app-kit", tag = "v0.1.8" }
+ha-app-kit-ha = { git = "https://github.com/jessfraz/ha-app-kit", tag = "v0.1.8" }
 hex = "0.4"
 getrandom = "0.4"
 http = "1"
