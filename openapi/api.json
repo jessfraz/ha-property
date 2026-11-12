@@ -1327,7 +1327,7 @@
   "info": {
     "description": "Evidence-backed property tax ledger. Bearer authentication or trusted HA ingress. Imports require exact preview hash, If-Match revision and an idempotency key. No payment submission or mark-paid API.",
     "title": "Property API",
-    "version": "0.1.7"
+    "version": "0.1.8"
   },
   "openapi": "3.0.3",
   "paths": {
