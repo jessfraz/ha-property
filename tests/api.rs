@@ -1,3 +1,4 @@
+use chrono::Utc;
 use property::{
     api::{self, ApiError, Context, Page, PropertyView, System},
     store::{ApplyRequest, ApplyResult, Preview, Store},
@@ -12,7 +13,21 @@ use std::{net::SocketAddr, sync::Arc};
 const OWNER: &str = "example-owner-credential-at-least-32-characters";
 const INTEGRATION: &str = "example-integration-credential-at-least-32-characters";
 fn input() -> ImportInput {
-    serde_json::from_str(include_str!("fixtures/import.example.json")).unwrap()
+    let mut input: ImportInput =
+        serde_json::from_str(include_str!("fixtures/import.example.json")).unwrap();
+    // Live HTTP summaries apply the 48-hour freshness window to this fixture.
+    let now = Utc::now();
+    input.property.confirmed_at = now;
+    input.property.confirmation.observed_at = now;
+    input.property.confirmation.effective_at = now;
+    for observation in &mut input.observations {
+        observation.evidence.observed_at = now;
+        observation.evidence.effective_at = now;
+    }
+    for coverage in &mut input.coverage {
+        coverage.checked_at = now;
+    }
+    input
 }
 async fn setup() -> (
     tempfile::TempDir,
